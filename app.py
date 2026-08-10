@@ -210,7 +210,7 @@ if not st.session_state.get('logged_in', False):
             if user:
                 username, name, role, status, expires_at = user
                 
-                # 30일/기간 만료 검증 (관리자는 제외)
+                # 이용 기간 만료 검증 (관리자는 제외)
                 if role != "admin" and expires_at:
                     try:
                         exp_date = datetime.strptime(expires_at, "%Y-%m-%d %H:%M:%S")
@@ -233,13 +233,20 @@ if not st.session_state.get('logged_in', False):
                     conn.close()
                     
                     st.session_state['logged_in'] = True
-                    st.session_state['user_info'] = {"username": username, "name": name, "role": role, "ip": user_ip, "session": new_session}
+                    st.session_state['user_info'] = {
+                        "username": username, 
+                        "name": name, 
+                        "role": role, 
+                        "ip": user_ip, 
+                        "session": new_session,
+                        "expires_at": expires_at
+                    }
                     st.success(f"{name}님, 환영합니다!")
                     st.rerun()
                 elif status == "pending":
                     st.warning("⏳ 아직 관리자 승인 대기 중인 계정입니다. 관리자가 가입을 승인해야 이용할 수 있습니다.")
                 elif status == "expired":
-                    st.error("⌛ 30일 무료 체험(또는 사용 기간)이 만료되었습니다. 기간 연장 및 유료 전환은 관리자에게 문의하세요.")
+                    st.error("⌛ 7일 무료 체험(또는 사용 기간)이 만료되었습니다. 기간 연장 및 유료 전환은 관리자에게 문의하세요.")
                 else:
                     st.error("🚫 사용이 차단되거나 비활성화된 계정입니다.")
             else:
@@ -247,7 +254,7 @@ if not st.session_state.get('logged_in', False):
                 
     with tab2:
         st.markdown("### 회원가입 신청")
-        st.info("💡 개인 이메일 인증번호 확인 후 가입 신청이 가능합니다. 신청 후 대표님(관리자)의 승인을 받으면 30일 무료 체험이 시작됩니다.")
+        st.info("💡 개인 이메일 인증번호 확인 후 가입 신청이 가능합니다. 신청 후 대표님(관리자)의 승인을 받으면 7일 무료 체험이 시작됩니다.")
         
         reg_id = st.text_input("사용할 아이디 (ID)", key="reg_id")
         reg_name = st.text_input("이름 / 회사명 (3글자 이상)", key="reg_name")
@@ -341,7 +348,7 @@ if not st.session_state.get('logged_in', False):
                     if 'code_email_target' in st.session_state: del st.session_state['code_email_target']
                     if 'email_verified' in st.session_state: del st.session_state['email_verified']
                     
-                    st.success("🎉 이메일 인증 및 가입 신청이 성공적으로 완료되었습니다! 대표님(관리자)이 승인해 주시면 30일 무료 체험 권한이 부여됩니다.")
+                    st.success("🎉 이메일 인증 및 가입 신청이 성공적으로 완료되었습니다! 대표님(관리자)이 승인해 주시면 7일 무료 체험 권한이 부여됩니다.")
     st.stop()
 
 # ------------------------------------------------------------------------------
@@ -349,12 +356,38 @@ if not st.session_state.get('logged_in', False):
 # ------------------------------------------------------------------------------
 user = st.session_state['user_info']
 
-col_h1, col_h2 = st.columns([8, 2])
+# ⏳ 남은 이용 시간 카운트다운 배지 계산
+remaining_badge = ""
+if user['role'] == 'admin':
+    remaining_badge = "👑 관리자 (무제한)"
+else:
+    expires_str = user.get('expires_at', '')
+    if expires_str:
+        try:
+            exp_dt = datetime.strptime(expires_str, "%Y-%m-%d %H:%M:%S")
+            now_dt = datetime.now()
+            diff = exp_dt - now_dt
+            
+            if diff.total_seconds() > 0:
+                days = diff.days
+                hours = diff.seconds // 3600
+                if days > 3:
+                    remaining_badge = f"🟢 이용 가능: D-{days} ({days}일 {hours}시간 남음)"
+                else:
+                    remaining_badge = f"⚠️ 만료 임박: D-{days} ({days}일 {hours}시간 남음)"
+            else:
+                remaining_badge = "⌛ 이용 기간 만료됨"
+        except Exception:
+            remaining_badge = "⏳ 만료일 확인 불가"
+
+col_h1, col_h2 = st.columns([7, 3])
 with col_h1:
     st.title("⚡ 대한일렉트릭 견적 프로그램")
     st.caption(f"접속 계정: **{user['name']} ({user['username']})** [{user['role'].upper()}] | 접속 IP: **{user.get('ip', user_ip)}**")
 with col_h2:
     st.write("")
+    if remaining_badge:
+        st.markdown(f"### `{remaining_badge}`")
     if st.button("🚪 로그아웃", type="secondary"):
         st.session_state['logged_in'] = False
         st.session_state['user_info'] = None
@@ -364,7 +397,7 @@ with col_h2:
 # 👑 관리자 전용 메뉴 (회원 승인 & 이용 기간 재발급/연장)
 # ------------------------------------------------------------------------------
 if user['role'] == 'admin':
-    with st.expander("👑 [관리자 전용] 회원 승인 및 이용 기간(30일/연장) 관리", expanded=True):
+    with st.expander("👑 [관리자 전용] 회원 승인 및 이용 기간(7일/연장) 관리", expanded=True):
         admin_tab1, admin_tab2 = st.tabs(["👥 회원 승인 & 기간 연장 관리", "📜 이용 이력(로그) 보기"])
         
         with admin_tab1:
@@ -392,50 +425,57 @@ if user['role'] == 'admin':
             st.dataframe(df_users[[c for c in cols_order if c in df_users.columns]], use_container_width=True)
             
             st.markdown("#### ⚙️ 회원 승인 / 상태 및 이용 기간 선택 설정")
-            c1, c2, c3, c4 = st.columns([3, 3, 3, 2])
-            with c1:
-                target_user = st.selectbox("대상 회원 선택", df_users["아이디"].tolist())
-            with c2:
-                new_status = st.selectbox("변경할 상태 선택", [
-                    "approved (승인 - 접속허용)", 
-                    "pending (대기)", 
-                    "expired (만료 처리)", 
-                    "rejected (차단)"
-                ])
-            with c3:
-                period_option = st.selectbox("부여할 이용 기간 (오늘 기준)", [
-                    "30일 (기본 무료체험)",
-                    "7일 (단기 체험)",
-                    "90일 (3개월 연장)",
-                    "180일 (6개월 연장)",
-                    "365일 (1년 구독)",
-                    "기존 만료일 유지 (변경 안 함)"
-                ])
-            with c4:
-                st.write("")
-                st.write("")
-                if st.button("상태 및 기간 적용", type="primary", use_container_width=True):
-                    status_code = new_status.split()[0]
-                    days_map = {
-                        "30일 (기본 무료체험)": 30,
-                        "7일 (단기 체험)": 7,
-                        "90일 (3개월 연장)": 90,
-                        "180일 (6개월 연장)": 180,
-                        "365일 (1년 구독)": 365
-                    }
-                    
-                    c = conn.cursor()
-                    if period_option in days_map and status_code == "approved":
-                        new_expires = (datetime.now() + timedelta(days=days_map[period_option])).strftime("%Y-%m-%d %H:%M:%S")
-                        c.execute("UPDATE users SET status=?, expires_at=? WHERE username=?", (status_code, new_expires, target_user))
-                        st.success(f"🎉 [{target_user}] 회원의 상태가 [승인]으로 설정되었으며, 오늘부터 {days_map[period_option]}일간({new_expires}까지) 이용 권한이 부여되었습니다!")
-                    else:
-                        c.execute("UPDATE users SET status=? WHERE username=?", (status_code, target_user))
-                        st.success(f"[{target_user}] 회원의 상태가 [{status_code}]로 즉시 변경되었습니다!")
-                    
-                    conn.commit()
-                    conn.close()
-                    st.rerun()
+            
+            # 관리자(admin) 계정은 선택 대상 드롭다운에서 제외
+            non_admin_users = df_users[df_users['권한'] != 'admin']['아이디'].tolist()
+            
+            if not non_admin_users:
+                st.info("💡 현재 가입된 일반 회원(사용자)이 없습니다.")
+            else:
+                c1, c2, c3, c4 = st.columns([3, 3, 3, 2])
+                with c1:
+                    target_user = st.selectbox("대상 회원 선택 (일반 회원)", non_admin_users)
+                with c2:
+                    new_status = st.selectbox("변경할 상태 선택", [
+                        "approved (승인 - 접속허용)", 
+                        "pending (대기)", 
+                        "expired (만료 처리)", 
+                        "rejected (차단)"
+                    ])
+                with c3:
+                    period_option = st.selectbox("부여할 이용 기간 (오늘 기준)", [
+                        "7일 (기본 무료체험)",
+                        "30일 (1개월 연장)",
+                        "90일 (3개월 연장)",
+                        "180일 (6개월 연장)",
+                        "365일 (1년 구독)",
+                        "기존 만료일 유지 (변경 안 함)"
+                    ])
+                with c4:
+                    st.write("")
+                    st.write("")
+                    if st.button("상태 및 기간 적용", type="primary", use_container_width=True):
+                        status_code = new_status.split()[0]
+                        days_map = {
+                            "7일 (기본 무료체험)": 7,
+                            "30일 (1개월 연장)": 30,
+                            "90일 (3개월 연장)": 90,
+                            "180일 (6개월 연장)": 180,
+                            "365일 (1년 구독)": 365
+                        }
+                        
+                        c = conn.cursor()
+                        if period_option in days_map and status_code == "approved":
+                            new_expires = (datetime.now() + timedelta(days=days_map[period_option])).strftime("%Y-%m-%d %H:%M:%S")
+                            c.execute("UPDATE users SET status=?, expires_at=? WHERE username=?", (status_code, new_expires, target_user))
+                            st.success(f"🎉 [{target_user}] 회원의 상태가 [승인]으로 설정되었으며, 오늘부터 {days_map[period_option]}일간({new_expires}까지) 이용 권한이 부여되었습니다!")
+                        else:
+                            c.execute("UPDATE users SET status=? WHERE username=?", (status_code, target_user))
+                            st.success(f"[{target_user}] 회원의 상태가 [{status_code}]로 즉시 변경되었습니다!")
+                        
+                        conn.commit()
+                        conn.close()
+                        st.rerun()
             conn.close()
             
         with admin_tab2:
