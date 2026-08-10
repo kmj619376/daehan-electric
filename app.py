@@ -125,7 +125,6 @@ user_ip = get_remote_ip()
 auth_user = cookie_manager.get(cookie="daehan_user")
 auth_session = cookie_manager.get(cookie="daehan_session")
 
-# F5 새로고침 시 쿠키에서 세션을 복원
 if auth_user and auth_session and not st.session_state.get('logged_in', False):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
@@ -137,7 +136,6 @@ if auth_user and auth_session and not st.session_state.get('logged_in', False):
         st.session_state['logged_in'] = True
         st.session_state['user_info'] = {"username": user_db[0], "name": user_db[1], "role": user_db[2], "ip": user_ip, "session": auth_session}
 
-# 다른 기기에서 중복 로그인하여 DB 세션 ID가 변경된 경우 즉시 강제 로그아웃
 if st.session_state.get('logged_in', False):
     current_user_id = st.session_state['user_info']['username']
     current_session_id = st.session_state['user_info'].get('session', '')
@@ -157,7 +155,7 @@ if st.session_state.get('logged_in', False):
         st.stop()
 
 # ------------------------------------------------------------------------------
-# 3. 로그인 / 회원가입 UI
+# 3. 로그인 / 회원가입 UI (엔터키 지원 폼 구현)
 # ------------------------------------------------------------------------------
 if not st.session_state.get('logged_in', False):
     st.title("⚡ 대한일렉트릭 견적 프로그램")
@@ -168,10 +166,14 @@ if not st.session_state.get('logged_in', False):
     
     with tab1:
         st.markdown("### 로그인")
-        login_id = st.text_input("아이디 (ID)", key="login_id")
-        login_pw = st.text_input("비밀번호", type="password", key="login_pw")
         
-        if st.button("로그인하기", type="primary"):
+        # Form 제출 형태로 변경하여 엔터키(Enter) 및 버튼 클릭 모두 지원
+        with st.form(key="login_form"):
+            login_id = st.text_input("아이디 (ID)", key="login_id")
+            login_pw = st.text_input("비밀번호", type="password", key="login_pw")
+            submit_login = st.form_submit_button("로그인하기", type="primary", use_container_width=True)
+            
+        if submit_login:
             conn = sqlite3.connect(DB_FILE)
             c = conn.cursor()
             c.execute("SELECT username, name, role, status FROM users WHERE username=? AND password=?", 
@@ -192,7 +194,6 @@ if not st.session_state.get('logged_in', False):
                     st.session_state['logged_in'] = True
                     st.session_state['user_info'] = {"username": username, "name": name, "role": role, "ip": user_ip, "session": new_session}
                     
-                    # 브라우저 쿠키에 로그인 정보 저장 (12시간 유효)
                     cookie_manager.set("daehan_user", username, max_age=12*3600)
                     cookie_manager.set("daehan_session", new_session, max_age=12*3600)
                     st.success(f"{name}님, 환영합니다!")
@@ -208,13 +209,15 @@ if not st.session_state.get('logged_in', False):
         st.markdown("### 회원가입 신청")
         st.info("💡 회원가입 시 대표님(관리자)에게 사전 전달받은 **2차 승인 핀코드**를 입력하셔야 신청이 완료됩니다.")
         
-        reg_id = st.text_input("사용할 아이디 (ID)", key="reg_id")
-        reg_name = st.text_input("이름 / 회사명", key="reg_name")
-        reg_pw = st.text_input("비밀번호", type="password", key="reg_pw")
-        reg_pw_confirm = st.text_input("비밀번호 확인", type="password", key="reg_pw_confirm")
-        reg_pin = st.text_input("2차 승인 핀코드 (관리자에게 전달받은 코드)", type="password", key="reg_pin")
-        
-        if st.button("가입 신청하기", type="primary"):
+        with st.form(key="register_form"):
+            reg_id = st.text_input("사용할 아이디 (ID)", key="reg_id")
+            reg_name = st.text_input("이름 / 회사명", key="reg_name")
+            reg_pw = st.text_input("비밀번호", type="password", key="reg_pw")
+            reg_pw_confirm = st.text_input("비밀번호 확인", type="password", key="reg_pw_confirm")
+            reg_pin = st.text_input("2차 승인 핀코드 (관리자에게 전달받은 코드)", type="password", key="reg_pin")
+            submit_reg = st.form_submit_button("가입 신청하기", type="primary", use_container_width=True)
+            
+        if submit_reg:
             if not reg_id or not reg_name or not reg_pw or not reg_pin:
                 st.error("모든 항목과 2차 승인 핀 코드를 입력해 주세요.")
             elif reg_pw != reg_pw_confirm:
