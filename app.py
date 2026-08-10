@@ -6,6 +6,7 @@ import uuid
 import random
 import smtplib
 import time
+import re
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta
@@ -382,15 +383,15 @@ if not st.session_state.get('logged_in', False):
             st.caption("✅ 이메일 인증이 완료되었습니다.")
 
         # 4) 비밀번호 실시간 검증
-        reg_pw = st.text_input("비밀번호", type="password", key="reg_pw")
-        reg_pw_confirm = st.text_input("비밀번호 확인", type="password", key="reg_pw_confirm")
-        if reg_pw_confirm:
-            if reg_pw != reg_pw_confirm:
-                st.markdown("<span style='color:#d32f2f; font-weight:bold;'>❌ 비밀번호가 일치하지 않습니다.</span>", unsafe_allow_html=True)
-            else:
-                st.markdown("<span style='color:#2e7d32; font-weight:bold;'>✅ 비밀번호가 일치합니다.</span>", unsafe_allow_html=True)
+reg_pw = st.text_input("비밀번호", type="password", key="reg_pw")
+reg_pw_confirm = st.text_input("비밀번호 확인", type="password", key="reg_pw_confirm")
+if reg_pw_confirm:
+    if reg_pw != reg_pw_confirm:
+        st.markdown("<span style='color:#d32f2f; font-weight:bold;'>❌ 비밀번호가 일치하지 않습니다.</span>", unsafe_allow_html=True)
+    else:
+        st.markdown("<span style='color:#2e7d32; font-weight:bold;'>✅ 비밀번호가 일치합니다.</span>", unsafe_allow_html=True)
 
-        if st.button("가입 신청하기", type="primary", use_container_width=True):
+if st.button("가입 신청하기", type="primary", use_container_width=True):
             missing_fields = []
             if not reg_id.strip(): missing_fields.append("아이디")
             if not reg_name.strip(): missing_fields.append("이름 / 회사명")
@@ -400,18 +401,21 @@ if not st.session_state.get('logged_in', False):
             if not reg_pw_confirm.strip(): missing_fields.append("비밀번호 확인")
 
             if missing_fields:
-                st.error(f"❌ 아래 항목이 입력되지 않았습니다: **{', '.join(missing_fields)}**")
+                st.error(f"❌ 아래 항목이 입력되지 않았증습니다: **{', '.join(missing_fields)}**")
             elif len(reg_name.strip()) < 3:
                 st.error("❌ 이름 / 회사명은 최소 3글자 이상 입력해 주세요.")
             elif any(forbidden in name_check_lower for forbidden in FORBIDDEN_WORDS):
                 st.error("❌ 올바른 이름 또는 회사명을 입력해 주세요. (무의미한 문구, 비속어, '미정/없음' 등은 가입 불가능합니다)")
             elif not clean_phone.isdigit() or len(clean_phone) != 11:
                 st.error("❌ 휴대폰 번호는 하이픈(-) 포함 여부와 상관없이 숫자 11자리로 입력해 주세요. (예: 01012345678)")
+            elif not is_valid_pw:  # 👈 이 조건문을 추가해 주세요!
+                st.error("❌ 비밀번호는 6자 이상이며, 영문과 숫자가 반드시 조합되어야 합니다. (숫자만 사용 불가)")
             elif reg_pw != reg_pw_confirm:
                 st.error("❌ 비밀번호와 비밀번호 확인이 일치하지 않습니다.")
             elif not st.session_state.get('email_verified', False):
                 st.error("❌ 이메일 [✅ 인증번호 확인] 버튼을 누르고 인증을 완료해 주세요.")
             else:
+                # 가입 진행...
                 formatted_phone = f"{clean_phone[:3]}-{clean_phone[3:7]}-{clean_phone[7:]}"
                 
                 conn = sqlite3.connect(DB_FILE)
