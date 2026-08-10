@@ -1,19 +1,20 @@
-import streamlit as st
-import pandas as pd
-import openpyxl
-from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-from openpyxl.utils import get_column_letter
 import io
 import json
 import sqlite3
 import hashlib
 from datetime import datetime
+import streamlit as st
+import pandas as pd
+import openpyxl
+from openpyxl.styles import Font, PatternFill, Alignment
+from openpyxl.utils import get_column_letter
 from PIL import Image
 import extra_streamlit_components as stx
 
 # ------------------------------------------------------------------------------
-# 🔑 API Key 안전 연동 (Streamlit Secrets 우선 불러오기)
+# 🔑 API Key 안전 연동 (Secrets에서 불러오기 - 문자열 직접 노출 방지)
 # ------------------------------------------------------------------------------
+GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", "")
 
 MARGIN_RATE = 0.10          # 자재 마진율 10%
 LABOR_RATE_MAIN = 260000    # 메인 차단기 노무비
@@ -76,6 +77,7 @@ def init_db():
     except Exception:
         pass
     
+    # 최고 관리자 계정 기본 생성 (syd1007 / kmj851007)
     admin_id = "syd1007"
     admin_pass = hashlib.sha256("kmj851007".encode()).hexdigest()
     
@@ -108,13 +110,11 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# 쿠키 매니저를 통한 세션 유지
 cookie_manager = stx.CookieManager()
-
 user_ip = get_remote_ip()
 
 # ------------------------------------------------------------------------------
-# 2. 쿠키 기반 자동 로그인 확인 (F5 새로고침 방지)
+# 2. 쿠키 기반 자동 로그인 (F5 새로고침 유지)
 # ------------------------------------------------------------------------------
 auth_user = cookie_manager.get(cookie="daehan_user")
 
@@ -130,7 +130,7 @@ if auth_user and not st.session_state.get('logged_in', False):
         st.session_state['user_info'] = {"username": user_db[0], "name": user_db[1], "role": user_db[2], "ip": user_ip}
 
 # ------------------------------------------------------------------------------
-# 3. 로그인 / 회원가입 UI 및 인증 로직
+# 3. 로그인 / 회원가입 UI
 # ------------------------------------------------------------------------------
 if not st.session_state.get('logged_in', False):
     st.title("⚡ 대한일렉트릭 견적 프로그램")
@@ -160,8 +160,6 @@ if not st.session_state.get('logged_in', False):
                     
                     st.session_state['logged_in'] = True
                     st.session_state['user_info'] = {"username": username, "name": name, "role": role, "ip": user_ip}
-                    
-                    # 브라우저 쿠키에 로그인 상태 저장 (30일 유지)
                     cookie_manager.set("daehan_user", username, max_age=30*24*3600)
                     st.success(f"{name}님, 환영합니다!")
                     st.rerun()
@@ -218,11 +216,11 @@ with col_h2:
     if st.button("🚪 로그아웃", type="secondary"):
         st.session_state['logged_in'] = False
         st.session_state['user_info'] = None
-        cookie_manager.delete("daehan_user")  # 로그아웃 시 쿠키 삭제
+        cookie_manager.delete("daehan_user")
         st.rerun()
 
 # ------------------------------------------------------------------------------
-# 👑 관리자(Admin) 전용 통제 메뉴
+# 👑 관리자 전용 메뉴
 # ------------------------------------------------------------------------------
 if user['role'] == 'admin':
     with st.expander("👑 [관리자 전용] 회원 승인 및 견적 이용 이력 관리 패널", expanded=True):
