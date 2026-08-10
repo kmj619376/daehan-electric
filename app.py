@@ -31,11 +31,23 @@ EXTRA_SHIPPING = 100000     # 현장 운반비 및 양중비
 
 DEFAULT_COLUMNS = ["분전반명", "구분", "종류", "극수", "용량", "부하명", "수량", "단가"]
 
-# 🚫 금지어 및 비속어 목록 (무의미한 단어, 욕설, 테스트용 문구 차단)
+# 🚫 대폭 확장된 금지어 및 비속어 목록 (무의미한 단어, 초성 욕설, 변형어, 테스트 문구 전면 차단)
 FORBIDDEN_WORDS = [
+    # 무의미/임시 문구
     "아직없음", "없음", "테스트", "모름", "미정", "개인", "임시", "무명", "blank",
-    "test", "none", "null", "admin", "undefined",
-    "시발", "씨발", "병신", "개새끼", "존나", "좆", "지랄", "새끼", "등신", "미친", "바보"
+    "test", "none", "null", "admin", "undefined", "무소속", "아무나", "아무개", "익명",
+    "aaa", "bbb", "ccc", "asdf", "qwer", "1234", "0000",
+    
+    # 대표 비속어 및 욕설
+    "시발", "씨발", "씨팔", "씨뱔", "시뱔", "쌰발", "씨바", "시바", "씨빨", "시빨",
+    "ㅅㅂ", "ㅆㅂ", "ㅅㅣ발", "씨1발", "시~발", "시.발", "씨.발",
+    "병신", "뼝신", "ㅂㅅ", "ㅂ~ㅅ", "ㅄ",
+    "개새끼", "개세끼", "개새키", "개쌔끼", "개쉐끼", "ㄱ새끼", "ㄱ새키", "ㄱㅅㄲ",
+    "존나", "존냣", "졸라", "쥰나", "ㅈㄴ", "ㅈㄹ", "지랄", "지랠", "짏랄",
+    "좆", "좃", "조까", "젓까", "좆까", "좆같", "좃같", "ㅈ까",
+    "새끼", "쌔끼", "새키", "떽", "등신", "미친", "미츼", "미칲", "바보", "멍청",
+    "년", "놈", "창녀", "창놈", "걸레", "육시랄", "염병", "십팔", "십8", "18년", "18놈",
+    "느금마", "느엠창", "애비", "애미", "패륜", "엠창"
 ]
 
 # ------------------------------------------------------------------------------
@@ -313,15 +325,23 @@ if not st.session_state.get('logged_in', False):
         
         reg_id = st.text_input("사용할 아이디 (ID)", key="reg_id")
         
-        # 1) 이름/회사명 실시간 검증
+        # 1) 이름/회사명 실시간 검증 및 관리자 경고문 강조
         reg_name = st.text_input("이름 / 회사명 (3글자 이상)", key="reg_name")
         name_val = reg_name.strip()
-        name_check_lower = name_val.lower()
+        
+        # 기호/특수문자 제거 후 검사
+        clean_name_check = re.sub(r'[^a-zA-Z0-9가-힣]', '', name_val.lower())
+        
         if name_val:
             if len(name_val) < 3:
                 st.markdown("<span style='color:#d32f2f; font-weight:bold;'>❌ 최소 3글자 이상 입력해야 합니다.</span>", unsafe_allow_html=True)
-            elif any(forbidden in name_check_lower for forbidden in FORBIDDEN_WORDS):
-                st.markdown("<span style='color:#d32f2f; font-weight:bold;'>❌ 올바르지 않은 문구(미정, 무의미한 단어, 비속어)는 사용 불가능합니다.</span>", unsafe_allow_html=True)
+            elif any(forbidden in clean_name_check for forbidden in FORBIDDEN_WORDS):
+                st.markdown("""
+                <div style="color:#d32f2f; font-weight:bold; font-size:14px; margin-top:4px;">
+                    ❌ 올바르지 않은 문구(미정, 무의미한 단어, 비속어)는 사용 불가능합니다. <br>
+                    ⚠️ 허위/장난 정보 가입 시 관리자에 의해 서비스 이용이 즉시 차단될 수 있습니다.
+                </div>
+                """, unsafe_allow_html=True)
             else:
                 st.markdown("<span style='color:#2e7d32; font-weight:bold;'>✅ 올바른 이름/회사명 형식입니다.</span>", unsafe_allow_html=True)
         
@@ -382,8 +402,8 @@ if not st.session_state.get('logged_in', False):
         if st.session_state.get('email_verified', False):
             st.caption("✅ 이메일 인증이 완료되었습니다.")
 
-        # 4) 비밀번호 실시간 검증 (6자 이상, 영문+숫자 조합 필수)
-        reg_pw = st.text_input("비밀번호 (6자 이상, 영문+숫자 조합)", type="password", key="reg_pw")
+        # 4) 비밀번호 실시간 검증 (입력 시 실시간 오류 상세 표기)
+        reg_pw = st.text_input("비밀번호 (6자 이상, 영문+숫자 필수 조합)", type="password", key="reg_pw")
         
         has_letter = bool(re.search(r'[a-zA-Z]', reg_pw)) if reg_pw else False
         has_digit = bool(re.search(r'\d', reg_pw)) if reg_pw else False
@@ -391,20 +411,20 @@ if not st.session_state.get('logged_in', False):
 
         if reg_pw:
             if len(reg_pw) < 6:
-                st.markdown("<span style='color:#d32f2f; font-weight:bold;'>❌ 비밀번호는 최소 6자 이상이어야 합니다.</span>", unsafe_allow_html=True)
+                st.markdown("<span style='color:#d32f2f; font-weight:bold;'>❌ 비밀번호가 너무 짧습니다. (최소 6자 이상 필요)</span>", unsafe_allow_html=True)
             elif reg_pw.isdigit():
-                st.markdown("<span style='color:#d32f2f; font-weight:bold;'>❌ 숫자만으로 구성된 비밀번호(예: 숫자 6개)는 사용할 수 없습니다.</span>", unsafe_allow_html=True)
+                st.markdown("<span style='color:#d32f2f; font-weight:bold;'>❌ 숫자만으로 구성된 비밀번호(예: 숫자 6개)는 보안상 사용 불가능합니다.</span>", unsafe_allow_html=True)
             elif not (has_letter and has_digit):
-                st.markdown("<span style='color:#d32f2f; font-weight:bold;'>❌ 영문과 숫자를 반드시 조합하여 입력해 주세요.</span>", unsafe_allow_html=True)
+                st.markdown("<span style='color:#d32f2f; font-weight:bold;'>❌ 영문자와 숫자를 반드시 함께 조합해야 합니다.</span>", unsafe_allow_html=True)
             else:
-                st.markdown("<span style='color:#2e7d32; font-weight:bold;'>✅ 안전한 비밀번호 조합입니다.</span>", unsafe_allow_html=True)
+                st.markdown("<span style='color:#2e7d32; font-weight:bold;'>✅ 조건에 맞는 안전한 비밀번호입니다.</span>", unsafe_allow_html=True)
 
         reg_pw_confirm = st.text_input("비밀번호 확인", type="password", key="reg_pw_confirm")
         if reg_pw_confirm:
             if reg_pw != reg_pw_confirm:
-                st.markdown("<span style='color:#d32f2f; font-weight:bold;'>❌ 비밀번호가 일치하지 않습니다.</span>", unsafe_allow_html=True)
+                st.markdown("<span style='color:#d32f2f; font-weight:bold;'>❌ 입력하신 두 비밀번호가 서로 일치하지 않습니다.</span>", unsafe_allow_html=True)
             else:
-                st.markdown("<span style='color:#2e7d32; font-weight:bold;'>✅ 비밀번호가 일치합니다.</span>", unsafe_allow_html=True)
+                st.markdown("<span style='color:#2e7d32; font-weight:bold;'>✅ 비밀번호가 정확히 일치합니다.</span>", unsafe_allow_html=True)
 
         if st.button("가입 신청하기", type="primary", use_container_width=True):
             missing_fields = []
@@ -419,8 +439,8 @@ if not st.session_state.get('logged_in', False):
                 st.error(f"❌ 아래 항목이 입력되지 않았습니다: **{', '.join(missing_fields)}**")
             elif len(reg_name.strip()) < 3:
                 st.error("❌ 이름 / 회사명은 최소 3글자 이상 입력해 주세요.")
-            elif any(forbidden in name_check_lower for forbidden in FORBIDDEN_WORDS):
-                st.error("❌ 올바른 이름 또는 회사명을 입력해 주세요. (무의미한 문구, 비속어, '미정/없음' 등은 가입 불가능합니다)")
+            elif any(forbidden in clean_name_check for forbidden in FORBIDDEN_WORDS):
+                st.error("❌ 올바른 이름 또는 회사명을 입력해 주세요. (무의미한 문구, 비속어, '미정/없음' 등은 가입 불가능하며 관리자에 의해 차단될 수 있습니다)")
             elif not clean_phone.isdigit() or len(clean_phone) != 11:
                 st.error("❌ 휴대폰 번호는 하이픈(-) 포함 여부와 상관없이 숫자 11자리로 입력해 주세요. (예: 01012345678)")
             elif not is_valid_pw:
