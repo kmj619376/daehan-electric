@@ -185,7 +185,7 @@ if st.session_state.get('logged_in', False):
 # ------------------------------------------------------------------------------
 if not st.session_state.get('logged_in', False):
     st.title("⚡ 대한일렉트릭 견적 프로그램")
-    st.subheader("🔒 회원 가입 후 관리자 승인 득인후 접속 가능")
+    st.subheader("🔒 사용자 인증 및 승인이 되어야 접속 가능")
     st.caption(f"🖥️ 현재 접속 IP: **{user_ip}**")
     
     tab1, tab2 = st.tabs(["🔑 로그인", "📝 회원가입 신청"])
@@ -229,7 +229,7 @@ if not st.session_state.get('logged_in', False):
                 
     with tab2:
         st.markdown("### 회원가입 신청")
-        st.info("💡 개인 이메일 인증번호 확인 후 가입 신청이 가능합니다. 신청 후 관리자의 최종 승인을 받아야 접속됩니다.")
+        st.info("💡 개인 이메일 인증번호 확인 후 가입 신청이 가능합니다. 신청 후 대표님(관리자)의 최종 승인을 받아야 접속됩니다.")
         
         reg_id = st.text_input("사용할 아이디 (ID)", key="reg_id")
         reg_name = st.text_input("이름 / 회사명 (3글자 이상)", key="reg_name")
@@ -289,7 +289,6 @@ if not st.session_state.get('logged_in', False):
             if not reg_pw.strip(): missing_fields.append("비밀번호")
             if not reg_pw_confirm.strip(): missing_fields.append("비밀번호 확인")
 
-            # 하이픈(-) 제거 후 숫자 11자리 체크
             clean_phone = reg_phone.replace("-", "").strip()
 
             if missing_fields:
@@ -303,7 +302,6 @@ if not st.session_state.get('logged_in', False):
             elif not st.session_state.get('email_verified', False):
                 st.error("❌ 이메일 [✅ 인증번호 확인] 버튼을 누르고 인증을 완료해 주세요.")
             else:
-                # 11자리 숫자를 010-XXXX-XXXX 형식으로 자동 예쁘게 변환
                 formatted_phone = f"{clean_phone[:3]}-{clean_phone[3:7]}-{clean_phone[7:]}"
                 
                 conn = sqlite3.connect(DB_FILE)
@@ -325,7 +323,7 @@ if not st.session_state.get('logged_in', False):
                     if 'code_email_target' in st.session_state: del st.session_state['code_email_target']
                     if 'email_verified' in st.session_state: del st.session_state['email_verified']
                     
-                    st.success("🎉 이메일 인증 및 가입 신청이 성공적으로 완료되었습니다! 관리자 승인해 주시면 로그인이 가능합니다.")
+                    st.success("🎉 이메일 인증 및 가입 신청이 성공적으로 완료되었습니다! 대표님(관리자)이 승인해 주시면 로그인이 가능합니다.")
     st.stop()
 
 # ------------------------------------------------------------------------------
@@ -383,7 +381,7 @@ if user['role'] == 'admin':
             conn.close()
 
 # ------------------------------------------------------------------------------
-# 5. Gemini AI 도면 분석 함수
+# 5. Gemini AI 도면 분석 함수 (구분='부속' 정의 전면 제거)
 # ------------------------------------------------------------------------------
 def analyze_drawing_with_gemini(image_pil, api_key, file_name, current_user, ip_addr):
     try:
@@ -393,17 +391,21 @@ def analyze_drawing_with_gemini(image_pil, api_key, file_name, current_user, ip_
         prompt = """
         이 분전반 도면 이미지를 정확히 분석하여 도면에 실제로 존재하는 부품 요소들만 추출해 JSON 배열로 반환하세요.
 
-        [추출 규칙]
+        [추출 및 구분 작성 규칙]
         1. 분전반명: 도면에 기재된 분전반 이름 (예: L-1, TQ-1, 분전반 등)
-        2. 차단기: 메인(MCCB, ELB) 및 분기 차단기 (종류, 극수, AF/AT 용량, 부하명, 수량)
-        3. 콘센트: 2구 콘센트 심볼이 있는 경우 종류="콘센트", 수량 카운트
-        4. 단자대: N.T, E.T 등 접지/중성 단자대가 표시되어 있다면 종류="단자대", 용량="N.T/E.T"
-        5. 계량기: WHM(전력량계) 등
+        2. 구분 항목 규칙:
+           - 메인 차단기: "MAIN"
+           - 분기 차단기: "분기"
+           - 부속 자재(콘센트, 단자대, 계량기 등): "MAIN" 또는 "분기"로 구분하거나, "부속"이라는 단어는 절대로 사용하지 마세요. (대신 종류 명칭을 명확히 할 것)
+        3. 종류: MCCB, ELB, 콘센트, 단자대, 계량기 등
+        4. 극수 및 용량: 3P, 2P / 50AF/40AT, N.T/E.T 등
+        5. 부하명 및 수량, 단가
 
         [JSON 반환 포맷 예시]
         [
             {"분전반명": "L-1", "구분": "MAIN", "종류": "MCCB", "극수": "3P", "용량": "50AF/40AT", "부하명": "메인", "수량": 1, "단가": 85000},
-            {"분전반명": "L-1", "구분": "분기", "종류": "ELB", "극수": "2P", "용량": "30AF/20AT", "부하명": "L1", "수량": 1, "단가": 12500}
+            {"분전반명": "L-1", "구분": "분기", "종류": "ELB", "극수": "2P", "용량": "30AF/20AT", "부하명": "L1", "수량": 1, "단가": 12500},
+            {"분전반명": "L-1", "구분": "분기", "종류": "콘센트", "극수": "", "용량": "2구", "부하명": "콘센트", "수량": 4, "단가": 5000}
         ]
         
         주의: 마크다운 태그(```json 등) 없이 오직 pure JSON 배열만 반환하세요.
@@ -546,14 +548,14 @@ def generate_excel_quote(df_items, margin_rate, labor_main, labor_branch, shippi
     return output.getvalue()
 
 # ------------------------------------------------------------------------------
-# 6. 다중 도면 업로드 및 작업 메인 UI
+# 6. 다중 도면 업로드 및 작업 메인 UI (드래그 앤 드롭 안내 문구 강화)
 # ------------------------------------------------------------------------------
 uploaded_files = st.file_uploader(
-    "🖼️ 결선도 도면 여러 장 업로드 (PNG, JPG, 복수 선택 가능)", 
+    "🖼️ 결선도 도면 마우스로 드래그하여 업로드 (PNG, JPG, 도면 복수 선택 가능)", 
     type=["png", "jpg", "jpeg"],
     accept_multiple_files=True
 )
-st.caption("📌 **지원 파일 형식**: `PNG`, `JPG`, `JPEG` (이미지 용량 최대 200MB 지원)")
+st.caption("📌 **지원 파일 형식**: `PNG`, `JPG`, `JPEG` (이미지 용량 최대 200MB 지원, 폴더에서 여러 장 끌어다 넣기 가능)")
 
 if uploaded_files:
     st.info(f"📂 총 **{len(uploaded_files)}개**의 도면 파일이 선택되었습니다.")
