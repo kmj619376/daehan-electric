@@ -3,3 +3,4 @@ pandas
 openpyxl
 Pillow
 google-generativeai
+extra-streamlit-components
