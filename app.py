@@ -179,7 +179,7 @@ def show_duplicate_login_dialog():
         st.rerun()
 
 # ------------------------------------------------------------------------------
-# 2. URL 청정화 및 동시 접속 실시간 통제
+# 2. URL 청정화 및 동시 접속 실시간 통제 (5초 자동 감지 스크립트 포함)
 # ------------------------------------------------------------------------------
 if "session" in st.query_params:
     st.query_params.clear()
@@ -196,6 +196,15 @@ if st.session_state.get('logged_in', False):
     
     if db_session and db_session[0] != current_session_id:
         st.session_state['show_dup_modal'] = True
+    else:
+        # 로그인 상태일 때 5초마다 배경에서 중복 접속 여부 자동 체크
+        st.components.v1.html("""
+            <script>
+                setTimeout(function(){
+                    window.parent.postMessage({type: 'streamlit:render'}, '*');
+                }, 5000);
+            </script>
+        """, height=0, width=0)
 
 if st.session_state.get('show_dup_modal', False):
     show_duplicate_login_dialog()
