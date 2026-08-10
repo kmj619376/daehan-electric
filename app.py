@@ -32,7 +32,7 @@ DEFAULT_COLUMNS = ["분전반명", "구분", "종류", "극수", "용량", "부�
 
 # 🚫 금지어 및 비속어 목록 (무의미한 단어, 욕설, 테스트용 문구 차단)
 FORBIDDEN_WORDS = [
-    "아직없음", "없음", "테스트", "모름", "미정", "개인", "임시", "무명", "blank",
+    "아직없음", "없음", "테스트", "모름", "모른다", "몰라도돼", "알거없음", "알려고하지마", "미정", "개인", "임시", "무명", "blank",
     "test", "none", "null", "admin", "undefined",
     "시발", "씨발", "병신", "개새끼", "존나", "좆", "지랄", "새끼", "등신", "미친", "바보"
 ]
@@ -320,7 +320,7 @@ if not st.session_state.get('logged_in', False):
             if len(name_val) < 3:
                 st.markdown("<span style='color:#d32f2f; font-weight:bold;'>❌ 최소 3글자 이상 입력해야 합니다.</span>", unsafe_allow_html=True)
             elif any(forbidden in name_check_lower for forbidden in FORBIDDEN_WORDS):
-                st.markdown("<span style='color:#d32f2f; font-weight:bold;'>❌ 올바르지 않은 문구(미정, 무의미한 단어, 비속어)는 사용 불가능합니다.</span>", unsafe_allow_html=True)
+                st.markdown("<span style='color:#d32f2f; font-weight:bold;'>❌ 올바르지 않은 문구(미정, 무의미한 단어, 비속어)는 사용 불가능합니다. 관리자에 의해 차단 될수도 있습니다.</span>", unsafe_allow_html=True)
             else:
                 st.markdown("<span style='color:#2e7d32; font-weight:bold;'>✅ 올바른 이름/회사명 형식입니다.</span>", unsafe_allow_html=True)
         
