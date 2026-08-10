@@ -555,7 +555,7 @@ uploaded_files = st.file_uploader(
     type=["png", "jpg", "jpeg"],
     accept_multiple_files=True
 )
-st.caption("📌 **지원 파일 형식**: `PNG`, `JPG`, `JPEG` (이미지 용량 최대 200MB 지원, 폴더에서 여러 장 끌어다 넣기 가능)")
+st.caption("📌 **지원 파일 형식**: `PNG`, `JPG`, `JPEG` (이미지 용량 최대 1GB 지원, 폴더에서 여러 장 끌어다 넣기 가능)")
 
 if uploaded_files:
     st.info(f"📂 총 **{len(uploaded_files)}개**의 도면 파일이 선택되었습니다.")
