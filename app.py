@@ -433,7 +433,7 @@ if not st.session_state.get('logged_in', False):
                     if 'code_email_target' in st.session_state: del st.session_state['code_email_target']
                     if 'email_verified' in st.session_state: del st.session_state['email_verified']
                     
-                    st.success("🎉 이메일 인증 및 가입 신청이 성공적으로 완료되었습니다!! 프로그램 사용해보시고 문의사항은 관리자에게 문의 주세요.!!!.")
+                    st.success("🎉 이메일 인증 및 가입 신청이 성공적으로 완료되었습니다! 관리자가 승인해 주시면 7일 무료 체험 권한이 부여됩니다.")
     st.stop()
 
 # ------------------------------------------------------------------------------
@@ -652,4 +652,192 @@ def analyze_drawing_with_gemini(image_pil, api_key, file_name, current_user, ip_
             text = text[7:]
         if text.startswith("```"):
             text = text[3:]
-        if text.endswith("
+        if text.endswith("```"):
+            text = text[:-3]
+        text = text.strip()
+        
+        parsed_data = json.loads(text)
+        
+        try:
+            conn = sqlite3.connect(DB_FILE)
+            c = conn.cursor()
+            c.execute('''
+                INSERT INTO usage_logs (username, file_name, item_count, ip_address, analyzed_at)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (current_user, file_name, len(parsed_data), ip_addr, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+            conn.commit()
+            conn.close()
+        except Exception:
+            pass
+            
+        return parsed_data
+    except Exception as e:
+        st.error(f"[{file_name}] 분석 중 오류 발생: {e}")
+        return []
+
+def generate_excel_quote(df_items, margin_rate, labor_main, labor_branch, shipping):
+    wb = openpyxl.Workbook()
+    
+    ws_sum = wb.active
+    ws_sum.title = "전체_견적요약"
+    ws_sum.views.sheetView[0].showGridLines = True
+    
+    navy_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
+    yellow_fill = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
+
+    ws_sum["B2"] = "대한일렉트릭 통합 견적서"
+    ws_sum["B2"].font = Font(size=18, bold=True, color="1F4E78")
+    
+    headers = ["번호", "분전반명", "자재비(원)", "인건비(원)", "합계금액(원)", "비고"]
+    for idx, h in enumerate(headers, start=2):
+        c = ws_sum.cell(row=5, column=idx, value=h)
+        c.fill = navy_fill
+        c.font = Font(color="FFFFFF", bold=True)
+        c.alignment = Alignment(horizontal="center")
+
+    ws_mat = wb.create_sheet(title="전체_차단기내역")
+    ws_mat.views.sheetView[0].showGridLines = True
+    
+    m_headers = ["분전반명", "구분", "종류", "극수", "용량", "부하명", "수량", "단가(원)", "금액(원)"]
+    for idx, h in enumerate(m_headers, start=1):
+        c = ws_mat.cell(row=1, column=idx, value=h)
+        c.fill = navy_fill
+        c.font = Font(color="FFFFFF", bold=True)
+        c.alignment = Alignment(horizontal="center")
+        
+    for r_idx, row in df_items.iterrows():
+        r = r_idx + 2
+        ws_mat.cell(row=r, column=1, value=str(row.get("분전반명", "")))
+        ws_mat.cell(row=r, column=2, value=str(row.get("구분", ""))).alignment = Alignment(horizontal="center")
+        ws_mat.cell(row=r, column=3, value=str(row.get("종류", ""))).alignment = Alignment(horizontal="center")
+        ws_mat.cell(row=r, column=4, value=str(row.get("극수", ""))).alignment = Alignment(horizontal="center")
+        ws_mat.cell(row=r, column=5, value=str(row.get("용량", ""))).alignment = Alignment(horizontal="center")
+        ws_mat.cell(row=r, column=6, value=str(row.get("부하명", "")))
+        
+        try:
+            qty = int(row.get("수량", 0))
+        except Exception:
+            qty = 0
+        try:
+            price = int(row.get("단가", 0))
+        except Exception:
+            price = 0
+
+        q_cell = ws_mat.cell(row=r, column=7, value=qty)
+        q_cell.fill = yellow_fill
+        q_cell.alignment = Alignment(horizontal="center")
+        
+        p_cell = ws_mat.cell(row=r, column=8, value=price)
+        p_cell.fill = yellow_fill
+        p_cell.number_format = "#,##0"
+        
+        amt_cell = ws_mat.cell(row=r, column=9, value=f"=G{r}*H{r}")
+        amt_cell.number_format = "#,##0"
+
+    valid_df = df_items[df_items["분전반명"].astype(str).str.strip() != ""]
+    panels = valid_df["분전반명"].unique() if len(valid_df) > 0 else ["기본분전반"]
+    
+    for idx, p_name in enumerate(panels, start=1):
+        r = idx + 5
+        ws_sum.cell(row=r, column=2, value=idx).alignment = Alignment(horizontal="center")
+        ws_sum.cell(row=r, column=3, value=p_name)
+        ws_sum.cell(row=r, column=4, value=f"=SUMIF('전체_차단기내역'!A2:A100, \"{p_name}\", '전체_차단기내역'!I2:I100)").number_format = "#,##0"
+        ws_sum.cell(row=r, column=5, value=f"=COUNTIF('전체_차단기내역'!A2:A100, \"{p_name}\")*{labor_branch}").number_format = "#,##0"
+        ws_sum.cell(row=r, column=6, value=f"=D{r}+E{r}").number_format = "#,##0"
+
+    for sheet in wb.worksheets:
+        for col in sheet.columns:
+            max_len = max(len(str(cell.value or '')) for cell in col)
+            col_letter = get_column_letter(col[0].column)
+            sheet.column_dimensions[col_letter].width = max(max_len + 5, 12)
+
+    output = io.BytesIO()
+    wb.save(output)
+    return output.getvalue()
+
+# ------------------------------------------------------------------------------
+# 6. 다중 도면 업로드 및 작업 메인 UI
+# ------------------------------------------------------------------------------
+uploaded_files = st.file_uploader(
+    "🖼️ 결선도 도면 여러 장 마우스로 드래그하여 업로드 (PNG, JPG, 복수 선택 가능)", 
+    type=["png", "jpg", "jpeg"],
+    accept_multiple_files=True
+)
+st.caption("📌 **지원 파일 형식**: `PNG`, `JPG`, `JPEG` (이미지 용량 최대 1GB 지원, 폴더에서 여러 장 끌어다 넣기 가능)")
+
+if uploaded_files:
+    st.info(f"📂 총 **{len(uploaded_files)}개**의 도면 파일이 선택되었습니다.")
+    
+    col1, col2 = st.columns([1, 1])
+    
+    with col1:
+        st.subheader("🖼️ 선택된 도면 미리보기")
+        for idx, file in enumerate(uploaded_files):
+            img = Image.open(file)
+            st.caption(f"📄 도면 {idx+1}: {file.name}")
+            st.image(img, use_container_width=True)
+            st.divider()
+        
+    with col2:
+        st.subheader("🔍 전체 도면 통합 해석")
+        st.info("💡 선명하고 해상도가 높은 이미지일수록 차단기 및 부품 문자 인식률이 대폭 올라갑니다.")
+        st.write("")
+        
+        if st.button("🚀 전체 도면 한번에 분석 시작", type="primary", use_container_width=True):
+            all_results = []
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            
+            blank_row = {"분전반명": "", "구분": "", "종류": "", "극수": "", "용량": "", "부하명": "", "수량": None, "단가": None}
+            
+            for idx, file in enumerate(uploaded_files):
+                status_text.text(f" 분석 중 ({idx+1}/{len(uploaded_files)}): {file.name}")
+                img = Image.open(file)
+                parsed_list = analyze_drawing_with_gemini(img, GEMINI_API_KEY, file.name, user['username'], user_ip)
+                
+                if parsed_list:
+                    if all_results:
+                        all_results.append(blank_row)
+                    all_results.extend(parsed_list)
+                    
+                progress_bar.progress((idx + 1) / len(uploaded_files))
+                
+            status_text.text("모든 도면 분석 완료!")
+            
+            if all_results:
+                st.session_state['extracted_data'] = pd.DataFrame(all_results)
+                st.success(f"🎉 총 {len(uploaded_files)}개 도면의 분석이 성공적으로 완료되었습니다!")
+            else:
+                st.session_state['extracted_data'] = pd.DataFrame(columns=DEFAULT_COLUMNS)
+                st.warning("도면에서 추출된 데이터가 없습니다.")
+
+if 'extracted_data' not in st.session_state:
+    st.session_state['extracted_data'] = pd.DataFrame(columns=DEFAULT_COLUMNS)
+
+st.divider()
+
+col_t, col_b = st.columns([8, 2])
+with col_t:
+    st.subheader("📋 추출된 분전반별 차단기 데이터 (통합)")
+with col_b:
+    if st.button("🗑️ 표 전체 비우기"):
+        st.session_state['extracted_data'] = pd.DataFrame(columns=DEFAULT_COLUMNS)
+        st.rerun()
+
+edited_df = st.data_editor(
+    st.session_state['extracted_data'],
+    num_rows="dynamic",
+    use_container_width=True
+)
+
+st.divider()
+
+excel_data = generate_excel_quote(edited_df, MARGIN_RATE, LABOR_RATE_MAIN, LABOR_RATE_BRANCH, EXTRA_SHIPPING)
+
+st.download_button(
+    label="📥 대한일렉트릭 견적서 엑셀 다운로드(.xlsx)",
+    data=excel_data,
+    file_name="대한일렉트릭_분전반_견적서.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    type="primary"
+)
