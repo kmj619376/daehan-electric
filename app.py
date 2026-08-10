@@ -4,6 +4,9 @@ import sqlite3
 import hashlib
 import uuid
 import random
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from datetime import datetime
 import streamlit as st
 import pandas as pd
@@ -13,9 +16,11 @@ from openpyxl.utils import get_column_letter
 from PIL import Image
 
 # ------------------------------------------------------------------------------
-# 🔑 API Key 안전 연동 (Secrets에서 불러오기)
+# 🔑 API Key 및 이메일 연동 (Secrets에서 불러오기)
 # ------------------------------------------------------------------------------
 GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", "")
+SMTP_EMAIL = st.secrets.get("SMTP_EMAIL", "")       # 발송용 Gmail 주소
+SMTP_PASSWORD = st.secrets.get("SMTP_PASSWORD", "") # Gmail 앱 비밀번호
 
 MARGIN_RATE = 0.10          # 자재 마진율 10%
 LABOR_RATE_MAIN = 260000    # 메인 차단기 노무비
@@ -39,6 +44,40 @@ def get_remote_ip():
         return "127.0.0.1"
 
 # ------------------------------------------------------------------------------
+# 📧 이메일 인증번호 발송 함수
+# ------------------------------------------------------------------------------
+def send_verification_email(to_email, code):
+    if not SMTP_EMAIL or not SMTP_PASSWORD:
+        return False, "서버의 이메일 발송 설정(Secrets)이 완료되지 않았습니다."
+    
+    try:
+        msg = MIMEMultipart()
+        msg['From'] = f"대한일렉트릭 <{SMTP_EMAIL}>"
+        msg['To'] = to_email
+        msg['Subject'] = "[대한일렉트릭] 회원가입 이메일 인증번호 안내"
+        
+        body = f"""
+        안녕하세요, 대한일렉트릭 견적 프로그램입니다.
+        
+        회원가입 신청을 위한 이메일 인증번호는 다음과 같습니다.
+        
+        ■ 인증번호: {code}
+        
+        프로그램 회원가입 창에 위 6자리 번호를 정확히 입력해 주세요.
+        감사합니다.
+        """
+        msg.attach(MIMEText(body, 'plain'))
+        
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.starttls()
+        server.login(SMTP_EMAIL, SMTP_PASSWORD)
+        server.send_message(msg)
+        server.quit()
+        return True, "인증번호가 이메일로 성공적으로 발송되었습니다!"
+    except Exception as e:
+        return False, f"이메일 발송 실패: {e}"
+
+# ------------------------------------------------------------------------------
 # 🗄️ Database (SQLite) 설정 및 초기화
 # ------------------------------------------------------------------------------
 DB_FILE = "users.db"
@@ -52,6 +91,8 @@ def init_db():
             username TEXT PRIMARY KEY,
             password TEXT NOT NULL,
             name TEXT NOT NULL,
+            email TEXT,
+            phone TEXT,
             role TEXT NOT NULL,
             status TEXT NOT NULL,
             ip_address TEXT,
@@ -61,7 +102,7 @@ def init_db():
         )
     ''')
     
-    for col in ["ip_address", "session_id", "pin_code"]:
+    for col in ["email", "phone", "ip_address", "session_id", "pin_code"]:
         try:
             c.execute(f"ALTER TABLE users ADD COLUMN {col} TEXT")
         except Exception:
@@ -89,8 +130,8 @@ def init_db():
     c.execute("SELECT * FROM users WHERE username=?", (admin_id,))
     if not c.fetchone():
         c.execute('''
-            INSERT INTO users (username, password, name, role, status, ip_address, session_id, pin_code, created_at)
-            VALUES (?, ?, '최고관리자', 'admin', 'approved', '관리자PC', '', '000000', ?)
+            INSERT INTO users (username, password, name, email, phone, role, status, ip_address, session_id, pin_code, created_at)
+            VALUES (?, ?, '최고관리자', 'admin@daehan.com', '010-0000-0000', 'admin', 'approved', '관리자PC', '', '000000', ?)
         ''', (admin_id, admin_pass, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
     else:
         c.execute('''
@@ -177,7 +218,6 @@ if not st.session_state.get('logged_in', False):
                     
                     st.session_state['logged_in'] = True
                     st.session_state['user_info'] = {"username": username, "name": name, "role": role, "ip": user_ip, "session": new_session}
-                    
                     st.success(f"{name}님, 환영합니다!")
                     st.rerun()
                 elif status == "pending":
@@ -189,21 +229,45 @@ if not st.session_state.get('logged_in', False):
                 
     with tab2:
         st.markdown("### 회원가입 신청")
-        st.info("💡 회원가입 시 대표님(관리자)에게 사전 전달받은 **2차 승인 핀코드**를 입력하셔야 신청이 완료됩니다.")
+        st.info("💡 개인 이메일 인증번호 확인 후 가입 신청이 가능합니다. 신청 후 대표님(관리자)의 최종 승인을 받아야 접속됩니다.")
         
-        with st.form(key="register_form"):
-            reg_id = st.text_input("사용할 아이디 (ID)", key="reg_id")
-            reg_name = st.text_input("이름 / 회사명", key="reg_name")
-            reg_pw = st.text_input("비밀번호", type="password", key="reg_pw")
-            reg_pw_confirm = st.text_input("비밀번호 확인", type="password", key="reg_pw_confirm")
-            reg_pin = st.text_input("2차 승인 핀코드 (관리자에게 전달받은 코드)", type="password", key="reg_pin")
-            submit_reg = st.form_submit_button("가입 신청하기", type="primary", use_container_width=True)
+        reg_id = st.text_input("사용할 아이디 (ID)", key="reg_id")
+        reg_name = st.text_input("이름 / 회사명", key="reg_name")
+        reg_phone = st.text_input("휴대폰 번호 (예: 010-1234-5678)", key="reg_phone")
+        
+        col_e1, col_e2 = st.columns([3, 1])
+        with col_e1:
+            reg_email = st.text_input("개인 이메일 주소", key="reg_email")
+        with col_e2:
+            st.write("")
+            st.write("")
+            if st.button("✉️ 인증번호 발송", use_container_width=True):
+                if not reg_email or "@" not in reg_email:
+                    st.error("올바른 이메일 주소를 입력해 주세요.")
+                else:
+                    code = str(random.randint(100000, 999999))
+                    st.session_state['email_code'] = code
+                    st.session_state['code_email_target'] = reg_email
+                    ok, msg = send_verification_email(reg_email, code)
+                    if ok:
+                        st.success("📩 입력하신 이메일로 6자리 인증번호가 발송되었습니다. 이메일함을 확인해 주세요!")
+                    else:
+                        st.error(msg)
+                        
+        reg_code = st.text_input("이메일로 수신된 6자리 인증번호", key="reg_code")
+        reg_pw = st.text_input("비밀번호", type="password", key="reg_pw")
+        reg_pw_confirm = st.text_input("비밀번호 확인", type="password", key="reg_pw_confirm")
+        
+        if st.button("가입 신청하기", type="primary", use_container_width=True):
+            saved_code = st.session_state.get('email_code', None)
+            target_email = st.session_state.get('code_email_target', None)
             
-        if submit_reg:
-            if not reg_id or not reg_name or not reg_pw or not reg_pin:
-                st.error("모든 항목과 2차 승인 핀 코드를 입력해 주세요.")
+            if not reg_id or not reg_name or not reg_phone or not reg_email or not reg_pw:
+                st.error("모든 필수 항목을 입력해 주세요.")
             elif reg_pw != reg_pw_confirm:
                 st.error("비밀번호가 일치하지 않습니다.")
+            elif not saved_code or reg_code != saved_code or reg_email != target_email:
+                st.error("❌ 이메일 인증번호가 일치하지 않거나 인증을 완료하지 않았습니다.")
             else:
                 conn = sqlite3.connect(DB_FILE)
                 c = conn.cursor()
@@ -213,20 +277,18 @@ if not st.session_state.get('logged_in', False):
                     st.error("이미 존재하는 아이디입니다.")
                     conn.close()
                 else:
-                    c.execute("SELECT username FROM users WHERE pin_code=?", (reg_pin,))
-                    matched_admin_pin = c.fetchone()
+                    c.execute('''
+                        INSERT INTO users (username, password, name, email, phone, role, status, ip_address, created_at)
+                        VALUES (?, ?, ?, ?, ?, 'user', 'pending', ?, ?)
+                    ''', (reg_id, hash_pw(reg_pw), reg_name, reg_email, reg_phone, user_ip, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+                    conn.commit()
+                    conn.close()
                     
-                    if matched_admin_pin or reg_pin == "000000":
-                        c.execute('''
-                            INSERT INTO users (username, password, name, role, status, ip_address, pin_code, created_at)
-                            VALUES (?, ?, ?, 'user', 'pending', ?, ?, ?)
-                        ''', (reg_id, hash_pw(reg_pw), reg_name, user_ip, reg_pin, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
-                        conn.commit()
-                        conn.close()
-                        st.success("🎉 가입 신청이 성공적으로 완료되었습니다! 대표님(관리자)이 승인해 주시면 로그인이 가능합니다.")
-                    else:
-                        conn.close()
-                        st.error("❌ 유효하지 않은 2차 승인 핀코드입니다. 대표님(관리자)에게 전달받은 코드를 확인해 주세요.")
+                    # 사용된 인증 세션 초기화
+                    del st.session_state['email_code']
+                    del st.session_state['code_email_target']
+                    
+                    st.success("🎉 이메일 인증 및 가입 신청이 성공적으로 완료되었습니다! 대표님(관리자)이 승인해 주시면 로그인이 가능합니다.")
     st.stop()
 
 # ------------------------------------------------------------------------------
@@ -249,13 +311,13 @@ with col_h2:
 # 👑 관리자 전용 메뉴
 # ------------------------------------------------------------------------------
 if user['role'] == 'admin':
-    with st.expander("👑 [관리자 전용] 회원 승인 및 가입용 2차 PIN 관리", expanded=True):
+    with st.expander("👑 [관리자 전용] 회원 승인 및 회원 정보 관리", expanded=True):
         admin_tab1, admin_tab2 = st.tabs(["👥 회원 승인 관리", "📜 이용 이력(로그) 보기"])
         
         with admin_tab1:
             st.subheader("회원가입 신청 승인 및 상태 관리")
             conn = sqlite3.connect(DB_FILE)
-            df_users = pd.read_sql_query("SELECT username AS 아이디, name AS 이름, role AS 권한, status AS 상태, pin_code AS 가입시사용한PIN, ip_address AS 접속IP, created_at AS 가입일시 FROM users", conn)
+            df_users = pd.read_sql_query("SELECT username AS 아이디, name AS 이름, email AS 이메일, phone AS 연락처, role AS 권한, status AS 상태, ip_address AS 접속IP, created_at AS 가입일시 FROM users", conn)
             st.dataframe(df_users, use_container_width=True)
             
             c1, c2, c3 = st.columns([4, 4, 2])
@@ -271,12 +333,10 @@ if user['role'] == 'admin':
                     c = conn.cursor()
                     c.execute("UPDATE users SET status=? WHERE username=?", (status_code, target_user))
                     conn.commit()
+                    conn.close()
                     st.success(f"[{target_user}] 회원 상태가 [{status_code}]로 즉시 변경되었습니다!")
                     st.rerun()
             conn.close()
-            
-            st.divider()
-            st.caption("💡 **신규 가입자용 사전 PIN 부여 안내**: 기본 마스터 PIN 코드는 `000000`입니다. 신규 가입자에게 `000000`을 알려주시고 가입 신청이 들어오면 위에서 [승인] 버튼을 눌러주시면 됩니다.")
             
         with admin_tab2:
             st.subheader("도면 분석 및 견적 이용 기록")
