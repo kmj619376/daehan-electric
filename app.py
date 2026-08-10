@@ -2,6 +2,7 @@ import io
 import json
 import sqlite3
 import hashlib
+import uuid
 from datetime import datetime
 import streamlit as st
 import pandas as pd
@@ -38,7 +39,7 @@ def get_remote_ip():
         return "127.0.0.1"
 
 # ------------------------------------------------------------------------------
-# 🗄️ Database (SQLite) 설정 및 초기화
+# 🗄️ Database (SQLite) 설정 및 초기화 (보안 강화 컬럼 추가)
 # ------------------------------------------------------------------------------
 DB_FILE = "users.db"
 
@@ -54,14 +55,18 @@ def init_db():
             role TEXT NOT NULL,
             status TEXT NOT NULL,
             ip_address TEXT,
+            session_id TEXT,
+            pin_code TEXT,
             created_at TEXT NOT NULL
         )
     ''')
     
-    try:
-        c.execute("ALTER TABLE users ADD COLUMN ip_address TEXT")
-    except Exception:
-        pass
+    # 기존 DB 테이블 컬럼 보완
+    for col in ["ip_address", "session_id", "pin_code"]:
+        try:
+            c.execute(f"ALTER TABLE users ADD COLUMN {col} TEXT")
+        except Exception:
+            pass
 
     c.execute('''
         CREATE TABLE IF NOT EXISTS usage_logs (
@@ -79,14 +84,15 @@ def init_db():
     except Exception:
         pass
     
+    # 최고 관리자 계정 생성 (syd1007 / kmj851007)
     admin_id = "syd1007"
     admin_pass = hashlib.sha256("kmj851007".encode()).hexdigest()
     
     c.execute("SELECT * FROM users WHERE username=?", (admin_id,))
     if not c.fetchone():
         c.execute('''
-            INSERT INTO users (username, password, name, role, status, ip_address, created_at)
-            VALUES (?, ?, '최고관리자', 'admin', 'approved', '관리자PC', ?)
+            INSERT INTO users (username, password, name, role, status, ip_address, session_id, pin_code, created_at)
+            VALUES (?, ?, '최고관리자', 'admin', 'approved', '관리자PC', '', '000000', ?)
         ''', (admin_id, admin_pass, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
     else:
         c.execute('''
@@ -115,68 +121,136 @@ cookie_manager = stx.CookieManager()
 user_ip = get_remote_ip()
 
 # ------------------------------------------------------------------------------
-# 2. 쿠키 기반 자동 로그인 (F5 새로고침 유지)
+# 2. 쿠키 기반 자동 로그인 & 동시 접속 모니터링 (1계정 1기기)
 # ------------------------------------------------------------------------------
 auth_user = cookie_manager.get(cookie="daehan_user")
+auth_session = cookie_manager.get(cookie="daehan_session")
 
-if auth_user and not st.session_state.get('logged_in', False):
+if auth_user and auth_session and not st.session_state.get('logged_in', False):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    c.execute("SELECT username, name, role, status FROM users WHERE username=?", (auth_user,))
+    c.execute("SELECT username, name, role, status, session_id FROM users WHERE username=?", (auth_user,))
     user_db = c.fetchone()
     conn.close()
     
-    if user_db and user_db[3] == "approved":
+    # DB에 저장된 최신 세션 ID와 현재 브라우저의 세션 ID가 일치할 때만 자동 로그인 허용
+    if user_db and user_db[3] == "approved" and user_db[4] == auth_session:
         st.session_state['logged_in'] = True
-        st.session_state['user_info'] = {"username": user_db[0], "name": user_db[1], "role": user_db[2], "ip": user_ip}
+        st.session_state['user_info'] = {"username": user_db[0], "name": user_db[1], "role": user_db[2], "ip": user_ip, "session": auth_session}
+
+# 메인 화면 이용 중 다른 곳에서 로그인하여 세션이 바뀌었는지 체크
+if st.session_state.get('logged_in', False):
+    current_user_id = st.session_state['user_info']['username']
+    current_session_id = st.session_state['user_info'].get('session', '')
+    
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("SELECT session_id FROM users WHERE username=?", (current_user_id,))
+    db_session = c.fetchone()
+    conn.close()
+    
+    if db_session and db_session[0] != current_session_id:
+        st.session_state['logged_in'] = False
+        st.session_state['user_info'] = None
+        cookie_manager.delete("daehan_user")
+        cookie_manager.delete("daehan_session")
+        st.error("🚨 다른 기기(PC/모바일)에서 동일한 계정으로 로그인되어 현재 접속이 강제 종료되었습니다.")
+        st.stop()
 
 # ------------------------------------------------------------------------------
-# 3. 로그인 / 회원가입 UI
+# 3. 로그인 / 회원가입 / 2차 인증 UI
 # ------------------------------------------------------------------------------
 if not st.session_state.get('logged_in', False):
     st.title("⚡ 대한일렉트릭 견적 프로그램")
-    st.subheader("🔒 사용자 인증 및 승인 관리")
+    st.subheader("🔒 사용자 인증 및 승인 관리 (보안 강화)")
     st.caption(f"🖥️ 현재 접속 IP: **{user_ip}**")
     
     tab1, tab2 = st.tabs(["🔑 로그인", "📝 회원가입 신청"])
     
     with tab1:
         st.markdown("### 로그인")
-        login_id = st.text_input("아이디 (ID)", key="login_id")
-        login_pw = st.text_input("비밀번호", type="password", key="login_pw")
         
-        if st.button("로그인하기", type="primary"):
-            conn = sqlite3.connect(DB_FILE)
-            c = conn.cursor()
-            c.execute("SELECT username, name, role, status FROM users WHERE username=? AND password=?", 
-                      (login_id, hash_pw(login_pw)))
-            user = c.fetchone()
+        # 2차 인증 단계 분기
+        if 'pending_2fa_user' not in st.session_state:
+            login_id = st.text_input("아이디 (ID)", key="login_id")
+            login_pw = st.text_input("비밀번호", type="password", key="login_pw")
             
-            if user:
-                username, name, role, status = user
-                if status == "approved":
-                    c.execute("UPDATE users SET ip_address=? WHERE username=?", (user_ip, username))
-                    conn.commit()
-                    conn.close()
-                    
-                    st.session_state['logged_in'] = True
-                    st.session_state['user_info'] = {"username": username, "name": name, "role": role, "ip": user_ip}
-                    cookie_manager.set("daehan_user", username, max_age=30*24*3600)
-                    st.success(f"{name}님, 환영합니다!")
-                    st.rerun()
-                elif status == "pending":
-                    conn.close()
-                    st.warning("⏳ 아직 관리자 승인 대기 중인 계정입니다. 관리자 승인 후 이용 가능합니다.")
-                else:
-                    conn.close()
-                    st.error("🚫 사용이 차단되거나 비활성화된 계정입니다.")
-            else:
+            if st.button("로그인하기", type="primary"):
+                conn = sqlite3.connect(DB_FILE)
+                c = conn.cursor()
+                c.execute("SELECT username, name, role, status, pin_code FROM users WHERE username=? AND password=?", 
+                          (login_id, hash_pw(login_pw)))
+                user = c.fetchone()
                 conn.close()
-                st.error("❌ 아이디 또는 비밀번호가 일치하지 않습니다.")
+                
+                if user:
+                    username, name, role, status, pin_code = user
+                    if status == "approved":
+                        # 최고 관리자 계정은 2차 인증 생략 가능
+                        if role == "admin":
+                            new_session = str(uuid.uuid4())
+                            conn = sqlite3.connect(DB_FILE)
+                            c = conn.cursor()
+                            c.execute("UPDATE users SET ip_address=?, session_id=? WHERE username=?", (user_ip, new_session, username))
+                            conn.commit()
+                            conn.close()
+                            
+                            st.session_state['logged_in'] = True
+                            st.session_state['user_info'] = {"username": username, "name": name, "role": role, "ip": user_ip, "session": new_session}
+                            
+                            # 쿠키 유효기간 12시간 단축 적용
+                            cookie_manager.set("daehan_user", username, max_age=12*3600)
+                            cookie_manager.set("daehan_session", new_session, max_age=12*3600)
+                            st.success(f"{name}님, 환영합니다!")
+                            st.rerun()
+                        else:
+                            # 일반 사용자는 2차 인증 단계로 진입
+                            st.session_state['pending_2fa_user'] = {
+                                "username": username, "name": name, "role": role, "pin": pin_code
+                            }
+                            st.rerun()
+                    elif status == "pending":
+                        st.warning("⏳ 아직 관리자 승인 대기 중인 계정입니다. 관리자 승인 후 이용 가능합니다.")
+                    else:
+                        st.error("🚫 사용이 차단되거나 비활성화된 계정입니다.")
+                else:
+                    st.error("❌ 아이디 또는 비밀번호가 일치하지 않습니다.")
+        else:
+            # 2차 인증 PIN 입력 창
+            p_user = st.session_state['pending_2fa_user']
+            st.info(f"🔑 **[{p_user['name']}]**님, 대표님(관리자)에게 부여받은 **6자리 2차 승인 핀코드(PIN)**를 입력해 주세요.")
+            input_pin = st.text_input("2차 승인 PIN 코드 (6자리)", type="password", key="input_pin")
+            
+            c_col1, c_col2 = st.columns([1, 1])
+            with c_col1:
+                if st.button("2차 인증 및 로그인 완료", type="primary"):
+                    if input_pin == p_user['pin']:
+                        new_session = str(uuid.uuid4())
+                        conn = sqlite3.connect(DB_FILE)
+                        c = conn.cursor()
+                        c.execute("UPDATE users SET ip_address=?, session_id=? WHERE username=?", (user_ip, new_session, p_user['username']))
+                        conn.commit()
+                        conn.close()
+                        
+                        st.session_state['logged_in'] = True
+                        st.session_state['user_info'] = {"username": p_user['username'], "name": p_user['name'], "role": p_user['role'], "ip": user_ip, "session": new_session}
+                        del st.session_state['pending_2fa_user']
+                        
+                        # 12시간 단축 쿠키 설정
+                        cookie_manager.set("daehan_user", p_user['username'], max_age=12*3600)
+                        cookie_manager.set("daehan_session", new_session, max_age=12*3600)
+                        st.success("🎉 2차 인증 성공!")
+                        st.rerun()
+                    else:
+                        st.error("❌ 2차 승인 PIN 코드가 일치하지 않습니다.")
+            with c_col2:
+                if st.button("취소 및 처음으로"):
+                    del st.session_state['pending_2fa_user']
+                    st.rerun()
                 
     with tab2:
         st.markdown("### 회원가입 신청")
-        st.info("회원가입 후 관리자(대한일렉트릭)의 승인을 받아야 프로그램 사용이 가능합니다.")
+        st.info("회원가입 신청 후 관리자의 승인 및 2차 PIN 코드를 부여받아야 사용 가능합니다.")
         reg_id = st.text_input("사용할 아이디 (ID)", key="reg_id")
         reg_name = st.text_input("이름 / 회사명", key="reg_name")
         reg_pw = st.text_input("비밀번호", type="password", key="reg_pw")
@@ -218,35 +292,38 @@ with col_h2:
         st.session_state['logged_in'] = False
         st.session_state['user_info'] = None
         cookie_manager.delete("daehan_user")
+        cookie_manager.delete("daehan_session")
         st.rerun()
 
 # ------------------------------------------------------------------------------
-# 👑 관리자 전용 메뉴
+# 👑 관리자 전용 메뉴 (회원 승인 및 2차 PIN 코드 부여 기능)
 # ------------------------------------------------------------------------------
 if user['role'] == 'admin':
-    with st.expander("👑 [관리자 전용] 회원 승인 및 견적 이용 이력 관리 패널", expanded=True):
-        admin_tab1, admin_tab2 = st.tabs(["👥 회원 승인 관리", "📜 이용 이력(로그) 보기"])
+    with st.expander("👑 [관리자 전용] 회원 승인, 2차 PIN 발급 및 이용 이력 관리", expanded=True):
+        admin_tab1, admin_tab2 = st.tabs(["👥 회원 승인 & 2차 PIN 관리", "📜 이용 이력(로그) 보기"])
         
         with admin_tab1:
-            st.subheader("사용자 승인 및 상태 변경")
+            st.subheader("사용자 승인 및 2차 PIN 코드 발급")
             conn = sqlite3.connect(DB_FILE)
-            df_users = pd.read_sql_query("SELECT username AS 아이디, name AS 이름, role AS 권한, status AS 상태, ip_address AS 접속IP, created_at AS 가입일시 FROM users", conn)
+            df_users = pd.read_sql_query("SELECT username AS 아이디, name AS 이름, role AS 권한, status AS 상태, pin_code AS 지정PIN코드, ip_address AS 접속IP, created_at AS 가입일시 FROM users", conn)
             st.dataframe(df_users, use_container_width=True)
             
-            c1, c2, c3 = st.columns([3, 3, 2])
+            c1, c2, c3, c4 = st.columns([3, 2, 2, 2])
             with c1:
-                target_user = st.selectbox("상태 변경 대상 아이디 선택", df_users["아이디"].tolist())
+                target_user = st.selectbox("대상 아이디 선택", df_users["아이디"].tolist())
             with c2:
-                new_status = st.selectbox("새 상태 선택", ["approved (승인)", "pending (대기)", "rejected (차단)"])
+                new_status = st.selectbox("상태 변경", ["approved (승인)", "pending (대기)", "rejected (차단)"])
             with c3:
+                new_pin = st.text_input("부여할 2차 PIN (6자리)", value="123456")
+            with c4:
                 st.write("")
                 st.write("")
-                if st.button("상태 업데이트 적용"):
+                if st.button("설정 적용"):
                     status_code = new_status.split()[0]
                     c = conn.cursor()
-                    c.execute("UPDATE users SET status=? WHERE username=?", (status_code, target_user))
+                    c.execute("UPDATE users SET status=?, pin_code=? WHERE username=?", (status_code, new_pin, target_user))
                     conn.commit()
-                    st.success(f"{target_user} 계정이 [{status_code}] 상태로 변경되었습니다!")
+                    st.success(f"[{target_user}] 상태: {status_code} / PIN: {new_pin} 변경 완료!")
                     st.rerun()
             conn.close()
             
