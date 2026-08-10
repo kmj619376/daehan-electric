@@ -118,20 +118,10 @@ st.set_page_config(
 user_ip = get_remote_ip()
 
 # ------------------------------------------------------------------------------
-# 2. URL 세션 기반 자동 로그인 복원 & 동시 접속 통제 (F5 새로고침 방지)
+# 2. URL 청정화 및 동시 접속 통제
 # ------------------------------------------------------------------------------
-url_session = st.query_params.get("session", None)
-
-if url_session and not st.session_state.get('logged_in', False):
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    c.execute("SELECT username, name, role, status, session_id FROM users WHERE session_id=?", (url_session,))
-    user_db = c.fetchone()
-    conn.close()
-    
-    if user_db and user_db[3] == "approved":
-        st.session_state['logged_in'] = True
-        st.session_state['user_info'] = {"username": user_db[0], "name": user_db[1], "role": user_db[2], "ip": user_ip, "session": url_session}
+if "session" in st.query_params:
+    st.query_params.clear()
 
 if st.session_state.get('logged_in', False):
     current_user_id = st.session_state['user_info']['username']
@@ -146,7 +136,6 @@ if st.session_state.get('logged_in', False):
     if db_session and db_session[0] != current_session_id:
         st.session_state['logged_in'] = False
         st.session_state['user_info'] = None
-        st.query_params.clear()
         st.error("🚨 다른 기기(PC/모바일)에서 동일한 계정으로 로그인되어 현재 접속이 강제 종료되었습니다.")
         st.stop()
 
@@ -189,7 +178,6 @@ if not st.session_state.get('logged_in', False):
                     st.session_state['logged_in'] = True
                     st.session_state['user_info'] = {"username": username, "name": name, "role": role, "ip": user_ip, "session": new_session}
                     
-                    st.query_params["session"] = new_session
                     st.success(f"{name}님, 환영합니다!")
                     st.rerun()
                 elif status == "pending":
@@ -255,7 +243,6 @@ with col_h2:
     if st.button("🚪 로그아웃", type="secondary"):
         st.session_state['logged_in'] = False
         st.session_state['user_info'] = None
-        st.query_params.clear()
         st.rerun()
 
 # ------------------------------------------------------------------------------
@@ -462,13 +449,14 @@ def generate_excel_quote(df_items, margin_rate, labor_main, labor_branch, shippi
     return output.getvalue()
 
 # ------------------------------------------------------------------------------
-# 6. 다중 도면 업로드 및 작업 메인 UI (지원 파일 서식 가이드 추가)
+# 6. 다중 도면 업로드 및 작업 메인 UI
 # ------------------------------------------------------------------------------
 uploaded_files = st.file_uploader(
     "🖼️ 결선도 도면 여러 장 업로드 (PNG, JPG, 복수 선택 가능)", 
     type=["png", "jpg", "jpeg"],
     accept_multiple_files=True
 )
+st.caption("📌 **지원 파일 형식**: `PNG`, `JPG`, `JPEG` (이미지 용량 최대 200MB 지원)")
 
 if uploaded_files:
     st.info(f"📂 총 **{len(uploaded_files)}개**의 도면 파일이 선택되었습니다.")
@@ -484,10 +472,8 @@ if uploaded_files:
             st.divider()
         
     with col2:
-        # 전체 도면 통합 해석 제목 옆/아래에 지원 파일 정보 추가
         st.subheader("🔍 전체 도면 통합 해석")
-        st.caption("📌 **지원 파일 형식**: `PNG`, `JPG`, `JPEG` (이미지 용량 최대 200MB 지원)")
-        st.info("💡 선명하고 해상도가 높은 이미지일수록 AI의 차단기 및 부품 문자 인식률이 대폭 올라갑니다.")
+        st.info("💡 선명하고 해상도가 높은 이미지일수록 차단기 및 부품 문자 인식률이 대폭 올라갑니다.")
         st.write("")
         
         if st.button("🚀 전체 도면 한번에 분석 시작", type="primary", use_container_width=True):
