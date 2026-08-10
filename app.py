@@ -21,6 +21,21 @@ LABOR_RATE_BRANCH = 15000   # 분기 차단기 노무비
 EXTRA_SHIPPING = 100000     # 현장 운반비 및 양중비
 
 # ------------------------------------------------------------------------------
+# 🌐 접속자 IP 주소 추출 함수
+# ------------------------------------------------------------------------------
+def get_remote_ip():
+    try:
+        # Streamlit 클라이언트 헤더에서 IP 가져오기
+        headers = st.context.headers
+        if "X-Forwarded-For" in headers:
+            return headers["X-Forwarded-For"].split(",")[0].strip()
+        elif "x-forwarded-for" in headers:
+            return headers["x-forwarded-for"].split(",")[0].strip()
+        return "알수없음"
+    except Exception:
+        return "127.0.0.1"
+
+# ------------------------------------------------------------------------------
 # 🗄️ Database (SQLite) 설정 및 초기화
 # ------------------------------------------------------------------------------
 DB_FILE = "users.db"
@@ -28,7 +43,8 @@ DB_FILE = "users.db"
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    # 사용자 테이블
+    
+    # 사용자 테이블 (ip_address 컬럼 포함)
     c.execute('''
         CREATE TABLE IF NOT EXISTS users (
             username TEXT PRIMARY KEY,
@@ -36,32 +52,45 @@ def init_db():
             name TEXT NOT NULL,
             role TEXT NOT NULL,
             status TEXT NOT NULL,
+            ip_address TEXT,
             created_at TEXT NOT NULL
         )
     ''')
-    # 분석 이력 로그 테이블
+    
+    # 기존 DB에 ip_address 컬럼이 없는 경우 자동 추가
+    try:
+        c.execute("ALTER TABLE users ADD COLUMN ip_address TEXT")
+    except Exception:
+        pass
+
+    # 분석 이력 로그 테이블 (ip_address 컬럼 포함)
     c.execute('''
         CREATE TABLE IF NOT EXISTS usage_logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT NOT NULL,
             file_name TEXT NOT NULL,
             item_count INTEGER NOT NULL,
+            ip_address TEXT,
             analyzed_at TEXT NOT NULL
         )
     ''')
     
-    # 지정하신 최고 관리자 계정 생성 및 암호화 (syd1007 / kmj851007)
+    try:
+        c.execute("ALTER TABLE usage_logs ADD COLUMN ip_address TEXT")
+    except Exception:
+        pass
+    
+    # 지정하신 최고 관리자 계정 생성 (syd1007 / kmj851007)
     admin_id = "syd1007"
     admin_pass = hashlib.sha256("kmj851007".encode()).hexdigest()
     
     c.execute("SELECT * FROM users WHERE username=?", (admin_id,))
     if not c.fetchone():
         c.execute('''
-            INSERT INTO users (username, password, name, role, status, created_at)
-            VALUES (?, ?, '최고관리자', 'admin', 'approved', ?)
+            INSERT INTO users (username, password, name, role, status, ip_address, created_at)
+            VALUES (?, ?, '최고관리자', 'admin', 'approved', '관리자PC', ?)
         ''', (admin_id, admin_pass, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
     else:
-        # 기존 계정이 존재하면 비밀번호 및 역할 갱신
         c.execute('''
             UPDATE users SET password=?, role='admin', status='approved' WHERE username=?
         ''', (admin_pass, admin_id))
@@ -92,9 +121,12 @@ if 'logged_in' not in st.session_state:
 if 'user_info' not in st.session_state:
     st.session_state['user_info'] = None
 
+user_ip = get_remote_ip()
+
 if not st.session_state['logged_in']:
     st.title("⚡ 대한일렉트릭 견적 프로그램")
     st.subheader("🔒 사용자 인증 및 승인 관리")
+    st.caption(f"🖥️ 현재 접속 PC IP 주소: **{user_ip}**")
     
     tab1, tab2 = st.tabs(["🔑 로그인", "📝 회원가입 신청"])
     
@@ -109,20 +141,27 @@ if not st.session_state['logged_in']:
             c.execute("SELECT username, name, role, status FROM users WHERE username=? AND password=?", 
                       (login_id, hash_pw(login_pw)))
             user = c.fetchone()
-            conn.close()
             
             if user:
                 username, name, role, status = user
                 if status == "approved":
+                    # 로그인 성공 시 IP 업데이트
+                    c.execute("UPDATE users SET ip_address=? WHERE username=?", (user_ip, username))
+                    conn.commit()
+                    conn.close()
+                    
                     st.session_state['logged_in'] = True
-                    st.session_state['user_info'] = {"username": username, "name": name, "role": role}
+                    st.session_state['user_info'] = {"username": username, "name": name, "role": role, "ip": user_ip}
                     st.success(f"{name}님, 환영합니다!")
                     st.rerun()
                 elif status == "pending":
+                    conn.close()
                     st.warning("⏳ 아직 관리자 승인 대기 중인 계정입니다. 관리자 승인 후 이용 가능합니다.")
                 else:
+                    conn.close()
                     st.error("🚫 사용이 차단되거나 비활성화된 계정입니다.")
             else:
+                conn.close()
                 st.error("❌ 아이디 또는 비밀번호가 일치하지 않습니다.")
                 
     with tab2:
@@ -146,9 +185,9 @@ if not st.session_state['logged_in']:
                     st.error("이미 존재하는 아이디입니다.")
                 else:
                     c.execute('''
-                        INSERT INTO users (username, password, name, role, status, created_at)
-                        VALUES (?, ?, ?, 'user', 'pending', ?)
-                    ''', (reg_id, hash_pw(reg_pw), reg_name, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+                        INSERT INTO users (username, password, name, role, status, ip_address, created_at)
+                        VALUES (?, ?, ?, 'user', 'pending', ?, ?)
+                    ''', (reg_id, hash_pw(reg_pw), reg_name, user_ip, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
                     conn.commit()
                     st.success("🎉 가입 신청이 완료되었습니다! 관리자 승인 후 이용 가능합니다.")
                 conn.close()
@@ -162,7 +201,7 @@ user = st.session_state['user_info']
 col_h1, col_h2 = st.columns([8, 2])
 with col_h1:
     st.title("⚡ 대한일렉트릭 견적 프로그램")
-    st.caption(f"접속 계정: **{user['name']} ({user['username']})** [{user['role'].upper()}]")
+    st.caption(f"접속 계정: **{user['name']} ({user['username']})** [{user['role'].upper()}] | 접속 IP: **{user.get('ip', user_ip)}**")
 with col_h2:
     st.write("")
     if st.button("🚪 로그아웃", type="secondary"):
@@ -174,13 +213,13 @@ with col_h2:
 # 👑 관리자(Admin) 전용 통제 메뉴
 # ------------------------------------------------------------------------------
 if user['role'] == 'admin':
-    with st.expander("👑 [관리자 전용] 회원 승인 및 견적 이용 이력 관리 패널", expanded=False):
+    with st.expander("👑 [관리자 전용] 회원 승인 및 견적 이용 이력 관리 패널", expanded=True):
         admin_tab1, admin_tab2 = st.tabs(["👥 회원 승인 관리", "📜 이용 이력(로그) 보기"])
         
         with admin_tab1:
             st.subheader("사용자 승인 및 상태 변경")
             conn = sqlite3.connect(DB_FILE)
-            df_users = pd.read_sql_query("SELECT username AS 아이디, name AS 이름, role AS 권한, status AS 상태, created_at AS 가입일시 FROM users", conn)
+            df_users = pd.read_sql_query("SELECT username AS 아이디, name AS 이름, role AS 권한, status AS 상태, ip_address AS 접속IP, created_at AS 가입일시 FROM users", conn)
             st.dataframe(df_users, use_container_width=True)
             
             c1, c2, c3 = st.columns([3, 3, 2])
@@ -203,7 +242,7 @@ if user['role'] == 'admin':
         with admin_tab2:
             st.subheader("도면 분석 및 견적 이용 기록")
             conn = sqlite3.connect(DB_FILE)
-            df_logs = pd.read_sql_query("SELECT id AS 번호, username AS 사용자, file_name AS 도면명, item_count AS 추출수량, analyzed_at AS 분석일시 FROM usage_logs ORDER BY id DESC", conn)
+            df_logs = pd.read_sql_query("SELECT id AS 번호, username AS 사용자, file_name AS 도면명, item_count AS 추출수량, ip_address AS 접속IP, analyzed_at AS 분석일시 FROM usage_logs ORDER BY id DESC", conn)
             st.dataframe(df_logs, use_container_width=True)
             conn.close()
 
@@ -222,7 +261,7 @@ def get_multi_panel_sample():
         {"분전반명": "동력반(P1~P3) [3면]", "구분": "부속", "종류": "단자대", "극수": "-", "용량": "N.T / E.T", "부하명": "중성선/접지 단자대", "수량": 2, "단가": 15000},
     ]
 
-def analyze_drawing_with_gemini(image_pil, api_key, file_name, current_user):
+def analyze_drawing_with_gemini(image_pil, api_key, file_name, current_user, ip_addr):
     try:
         import google.generativeai as genai
         genai.configure(api_key=api_key)
@@ -285,14 +324,14 @@ def analyze_drawing_with_gemini(image_pil, api_key, file_name, current_user):
         
         parsed_data = json.loads(text)
         
-        # 📜 이용 이력(로그) DB 기록
+        # 📜 이용 이력(로그) DB 기록 (IP 포함)
         try:
             conn = sqlite3.connect(DB_FILE)
             c = conn.cursor()
             c.execute('''
-                INSERT INTO usage_logs (username, file_name, item_count, analyzed_at)
-                VALUES (?, ?, ?, ?)
-            ''', (current_user, file_name, len(parsed_data), datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+                INSERT INTO usage_logs (username, file_name, item_count, ip_address, analyzed_at)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (current_user, file_name, len(parsed_data), ip_addr, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
             conn.commit()
             conn.close()
         except Exception as log_err:
@@ -398,7 +437,7 @@ if uploaded_file:
         st.subheader("🔍 도면 해석")
         if st.button("🚀 도면 분석 시작"):
             with st.spinner("도면의 차단기, 콘센트, 단자대 등 모든 부품 데이터를 분석 중입니다..."):
-                raw_data = analyze_drawing_with_gemini(image, GEMINI_API_KEY, uploaded_file.name, user['username'])
+                raw_data = analyze_drawing_with_gemini(image, GEMINI_API_KEY, uploaded_file.name, user['username'], user_ip)
                 st.session_state['extracted_data'] = pd.DataFrame(raw_data)
                 st.success("도면 분석이 완료되었습니다!")
 
