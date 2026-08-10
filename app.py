@@ -185,7 +185,7 @@ if st.session_state.get('logged_in', False):
 # ------------------------------------------------------------------------------
 if not st.session_state.get('logged_in', False):
     st.title("⚡ 대한일렉트릭 견적 프로그램")
-    st.subheader("🔒 사용자 인증 및 승인이 되어야 접속 가능")
+    st.subheader("🔒 회원 가입 후 관리자 승인 득인후 접속 가능")
     st.caption(f"🖥️ 현재 접속 IP: **{user_ip}**")
     
     tab1, tab2 = st.tabs(["🔑 로그인", "📝 회원가입 신청"])
