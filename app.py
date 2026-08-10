@@ -33,12 +33,9 @@ DEFAULT_COLUMNS = ["분전반명", "구분", "종류", "극수", "용량", "부�
 
 # 🚫 대폭 확장된 금지어 및 비속어 목록 (무의미한 단어, 초성 욕설, 변형어, 테스트 문구 전면 차단)
 FORBIDDEN_WORDS = [
-    # 무의미/임시 문구
     "아직없음", "없음", "테스트", "모름", "미정", "개인", "임시", "무명", "blank",
     "test", "none", "null", "admin", "undefined", "무소속", "아무나", "아무개", "익명",
     "aaa", "bbb", "ccc", "asdf", "qwer", "1234", "0000",
-    
-    # 대표 비속어 및 욕설
     "시발", "씨발", "씨팔", "씨뱔", "시뱔", "쌰발", "씨바", "시바", "씨빨", "시빨",
     "ㅅㅂ", "ㅆㅂ", "ㅅㅣ발", "씨1발", "시~발", "시.발", "씨.발",
     "병신", "뼝신", "ㅂㅅ", "ㅂ~ㅅ", "ㅄ",
@@ -323,22 +320,43 @@ if not st.session_state.get('logged_in', False):
         st.markdown("### 회원가입 신청")
         st.info("💡 개인 이메일 인증번호 확인 후 가입 신청이 가능합니다. 신청 후 관리자의 승인을 받으면 7일 무료 체험이 시작됩니다.")
         
-        reg_id = st.text_input("사용할 아이디 (ID)", key="reg_id")
+        # 0) 아이디(ID) 실시간 엄격 검증
+        reg_id = st.text_input("사용할 아이디 (ID - 4자 이상, 영문 포함 필수)", key="reg_id")
+        id_val = reg_id.strip()
+        id_check_lower = id_val.lower()
+        has_id_letter = bool(re.search(r'[a-zA-Z]', id_val)) if id_val else False
+        is_repeat_char = bool(re.search(r'(.)\1\1', id_val)) if id_val else False
         
-        # 1) 이름/회사명 실시간 검증 및 관리자 경고문 강조
+        is_valid_id = len(id_val) >= 4 and has_id_letter and not id_val.isdigit() and not is_repeat_char and not any(f in id_check_lower for f in FORBIDDEN_WORDS)
+        
+        if id_val:
+            if len(id_val) < 4:
+                st.markdown("<span style='color:#d32f2f; font-weight:bold;'>❌ 아이디는 최소 4자 이상이어야 합니다.</span>", unsafe_allow_html=True)
+            elif id_val.isdigit():
+                st.markdown("<span style='color:#d32f2f; font-weight:bold;'>❌ 숫자만으로 된 아이디는 사용할 수 없습니다. (영문 포함 필수)</span>", unsafe_allow_html=True)
+            elif not has_id_letter:
+                st.markdown("<span style='color:#d32f2f; font-weight:bold;'>❌ 아이디에 영문자가 최소 1자 이상 포함되어야 합니다.</span>", unsafe_allow_html=True)
+            elif is_repeat_char:
+                st.markdown("<span style='color:#d32f2f; font-weight:bold;'>❌ 동일한 문자를 3번 이상 연속으로 반복할 수 없습니다.</span>", unsafe_allow_html=True)
+            elif any(f in id_check_lower for f in FORBIDDEN_WORDS):
+                st.markdown("<span style='color:#d32f2f; font-weight:bold;'>❌ 금지어나 비속어가 포함된 아이디는 사용할 수 없습니다.</span>", unsafe_allow_html=True)
+            else:
+                st.markdown("<span style='color:#2e7d32; font-weight:bold;'>✅ 올바른 아이디 형식입니다.</span>", unsafe_allow_html=True)
+
+        # 1) 이름/회사명 실시간 검증
         reg_name = st.text_input("이름 / 회사명 (3글자 이상)", key="reg_name")
         name_val = reg_name.strip()
         
-        # 기호/특수문자 제거 후 검사
+        is_jamo_repeat = bool(re.search(r'([ㄱ-ㅎㅏ-ㅣ])\1\1', name_val)) if name_val else False
         clean_name_check = re.sub(r'[^a-zA-Z0-9가-힣]', '', name_val.lower())
         
         if name_val:
             if len(name_val) < 3:
                 st.markdown("<span style='color:#d32f2f; font-weight:bold;'>❌ 최소 3글자 이상 입력해야 합니다.</span>", unsafe_allow_html=True)
-            elif any(forbidden in clean_name_check for forbidden in FORBIDDEN_WORDS):
+            elif is_jamo_repeat or any(forbidden in clean_name_check for forbidden in FORBIDDEN_WORDS):
                 st.markdown("""
                 <div style="color:#d32f2f; font-weight:bold; font-size:14px; margin-top:4px;">
-                    ❌ 올바르지 않은 문구(미정, 무의미한 단어, 비속어)는 사용 불가능합니다. <br>
+                    ❌ 올바르지 않은 문구(미정, 장난성 초성 ㄱㄱㄱ/ㅋㅋㅋ, 무의미한 단어, 비속어)는 사용 불가능합니다. <br>
                     ⚠️ 허위/장난 정보 가입 시 관리자에 의해 서비스 이용이 즉시 차단될 수 있습니다.
                 </div>
                 """, unsafe_allow_html=True)
@@ -402,22 +420,61 @@ if not st.session_state.get('logged_in', False):
         if st.session_state.get('email_verified', False):
             st.caption("✅ 이메일 인증이 완료되었습니다.")
 
-        # 4) 비밀번호 실시간 검증 (입력 시 실시간 오류 상세 표기)
-        reg_pw = st.text_input("비밀번호 (6자 이상, 영문+숫자 필수 조합)", type="password", key="reg_pw")
+        # 4) 비밀번호 실시간 극강 검증 (중복/연속/ID/전화번호/이메일/생년월일 전면 차단)
+        reg_pw = st.text_input("비밀번호 (6자 이상, 영문+숫자 필수)", type="password", key="reg_pw")
         
         has_letter = bool(re.search(r'[a-zA-Z]', reg_pw)) if reg_pw else False
         has_digit = bool(re.search(r'\d', reg_pw)) if reg_pw else False
-        is_valid_pw = len(reg_pw) >= 6 and has_letter and has_digit and not reg_pw.isdigit()
+        
+        # 보안 검증 항목들
+        pw_repeat = bool(re.search(r'(.)\1\1', reg_pw)) if reg_pw else False  # 연속 3회 중복 (aaa, 111 등)
+        is_seq_pattern = bool(re.search(r'(1234|2345|3456|4567|5678|6789|0123|abcd|qwer|asdf)', reg_pw.lower())) if reg_pw else False # 연속 패턴
+        
+        contains_id = (id_val.lower() in reg_pw.lower() or id_val in reg_pw) if (id_val and len(id_val)>=3) else False # ID 차용
+        
+        phone_middle = clean_phone[3:7] if len(clean_phone) == 11 else ""
+        phone_last = clean_phone[7:] if len(clean_phone) == 11 else ""
+        contains_phone = ((phone_middle in reg_pw) or (phone_last in reg_pw)) if (phone_middle and phone_last) else False # 전화번호 차용
+        
+        email_prefix = reg_email.split("@")[0] if "@" in reg_email else ""
+        contains_email = (email_prefix.lower() in reg_pw.lower()) if (email_prefix and len(email_prefix)>=3) else False # 이메일 차용
+        
+        is_birth_pattern = bool(re.search(r'(19[5-9]\d|20[0-2]\d)(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])', reg_pw)) or bool(re.search(r'(\d{2})(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])', reg_pw)) if reg_pw else False # 6/8자리 생년월일
+
+        is_valid_pw = (
+            len(reg_pw) >= 6 and 
+            has_letter and 
+            has_digit and 
+            not reg_pw.isdigit() and 
+            not pw_repeat and 
+            not is_seq_pattern and 
+            not contains_id and 
+            not contains_phone and 
+            not contains_email and 
+            not is_birth_pattern
+        )
 
         if reg_pw:
             if len(reg_pw) < 6:
-                st.markdown("<span style='color:#d32f2f; font-weight:bold;'>❌ 비밀번호가 너무 짧습니다. (최소 6자 이상 필요)</span>", unsafe_allow_html=True)
+                st.markdown("<span style='color:#d32f2f; font-weight:bold;'>❌ 비밀번호가 너무 짧습니다. (최소 6자 이상)</span>", unsafe_allow_html=True)
             elif reg_pw.isdigit():
-                st.markdown("<span style='color:#d32f2f; font-weight:bold;'>❌ 숫자만으로 구성된 비밀번호(예: 숫자 6개)는 보안상 사용 불가능합니다.</span>", unsafe_allow_html=True)
+                st.markdown("<span style='color:#d32f2f; font-weight:bold;'>❌ 숫자만으로 구성된 비밀번호는 사용할 수 없습니다. (영문 포함 필수)</span>", unsafe_allow_html=True)
             elif not (has_letter and has_digit):
-                st.markdown("<span style='color:#d32f2f; font-weight:bold;'>❌ 영문자와 숫자를 반드시 함께 조합해야 합니다.</span>", unsafe_allow_html=True)
+                st.markdown("<span style='color:#d32f2f; font-weight:bold;'>❌ 영문자와 숫자를 반드시 조합해야 합니다.</span>", unsafe_allow_html=True)
+            elif pw_repeat:
+                st.markdown("<span style='color:#d32f2f; font-weight:bold;'>❌ 동일한 문자를 3번 이상 연속 사용할 수 없습니다. (예: aaa, 111 금지)</span>", unsafe_allow_html=True)
+            elif is_seq_pattern:
+                st.markdown("<span style='color:#d32f2f; font-weight:bold;'>❌ 1234, abcd, qwer, asdf 등 쉬운 연속 패턴은 사용할 수 없습니다.</span>", unsafe_allow_html=True)
+            elif contains_id:
+                st.markdown("<span style='color:#d32f2f; font-weight:bold;'>❌ 아이디(ID)와 동일하거나 유사한 단어/숫자는 포함할 수 없습니다.</span>", unsafe_allow_html=True)
+            elif contains_phone:
+                st.markdown("<span style='color:#d32f2f; font-weight:bold;'>❌ 휴대폰 번호(중간/뒷자리) 숫자는 비밀번호에 사용할 수 없습니다.</span>", unsafe_allow_html=True)
+            elif contains_email:
+                st.markdown("<span style='color:#d32f2f; font-weight:bold;'>❌ 이메일 아이디 단어는 비밀번호에 포함할 수 없습니다.</span>", unsafe_allow_html=True)
+            elif is_birth_pattern:
+                st.markdown("<span style='color:#d32f2f; font-weight:bold;'>❌ 생년월일 날짜 형태(예: 900101, 19950520 등)는 사용할 수 없습니다.</span>", unsafe_allow_html=True)
             else:
-                st.markdown("<span style='color:#2e7d32; font-weight:bold;'>✅ 조건에 맞는 안전한 비밀번호입니다.</span>", unsafe_allow_html=True)
+                st.markdown("<span style='color:#2e7d32; font-weight:bold;'>✅ 아주 안전하고 유효한 비밀번호입니다.</span>", unsafe_allow_html=True)
 
         reg_pw_confirm = st.text_input("비밀번호 확인", type="password", key="reg_pw_confirm")
         if reg_pw_confirm:
@@ -428,8 +485,8 @@ if not st.session_state.get('logged_in', False):
 
         if st.button("가입 신청하기", type="primary", use_container_width=True):
             missing_fields = []
-            if not reg_id.strip(): missing_fields.append("아이디")
-            if not reg_name.strip(): missing_fields.append("이름 / 회사명")
+            if not id_val: missing_fields.append("아이디")
+            if not name_val: missing_fields.append("이름 / 회사명")
             if not reg_phone.strip(): missing_fields.append("휴대폰 번호")
             if not reg_email.strip(): missing_fields.append("이메일 주소")
             if not reg_pw.strip(): missing_fields.append("비밀번호")
@@ -437,14 +494,16 @@ if not st.session_state.get('logged_in', False):
 
             if missing_fields:
                 st.error(f"❌ 아래 항목이 입력되지 않았습니다: **{', '.join(missing_fields)}**")
-            elif len(reg_name.strip()) < 3:
+            elif not is_valid_id:
+                st.error("❌ 아이디 조건을 확인해 주세요. (4자 이상, 영문 포함 필수, 숫자만 사용 및 반복문자 금지)")
+            elif len(name_val) < 3:
                 st.error("❌ 이름 / 회사명은 최소 3글자 이상 입력해 주세요.")
-            elif any(forbidden in clean_name_check for forbidden in FORBIDDEN_WORDS):
-                st.error("❌ 올바른 이름 또는 회사명을 입력해 주세요. (무의미한 문구, 비속어, '미정/없음' 등은 가입 불가능하며 관리자에 의해 차단될 수 있습니다)")
+            elif is_jamo_repeat or any(forbidden in clean_name_check for forbidden in FORBIDDEN_WORDS):
+                st.error("❌ 올바른 이름 또는 회사명을 입력해 주세요. (무의미한 문구, 장난성 초성, 비속어, '미정/없음' 등은 가입 불가능하며 관리자에 의해 차단될 수 있습니다)")
             elif not clean_phone.isdigit() or len(clean_phone) != 11:
                 st.error("❌ 휴대폰 번호는 하이픈(-) 포함 여부와 상관없이 숫자 11자리로 입력해 주세요. (예: 01012345678)")
             elif not is_valid_pw:
-                st.error("❌ 비밀번호는 6자 이상이며, 영문과 숫자가 반드시 조합되어야 합니다. (숫자만 사용 불가)")
+                st.error("❌ 비밀번호 보안 규칙을 확인해 주세요. (6자 이상, 영문+숫자 필수, ID/휴대폰/이메일/생년월일/연속문자 사용 불가)")
             elif reg_pw != reg_pw_confirm:
                 st.error("❌ 비밀번호와 비밀번호 확인이 일치하지 않습니다.")
             elif not st.session_state.get('email_verified', False):
@@ -455,7 +514,7 @@ if not st.session_state.get('logged_in', False):
                 conn = sqlite3.connect(DB_FILE)
                 c = conn.cursor()
                 
-                c.execute("SELECT * FROM users WHERE username=?", (reg_id,))
+                c.execute("SELECT * FROM users WHERE username=?", (id_val,))
                 if c.fetchone():
                     st.error("❌ 이미 존재하거나 사용 중인 아이디입니다.")
                     conn.close()
@@ -463,7 +522,7 @@ if not st.session_state.get('logged_in', False):
                     c.execute('''
                         INSERT INTO users (username, password, name, email, phone, role, status, ip_address, created_at)
                         VALUES (?, ?, ?, ?, ?, 'user', 'pending', ?, ?)
-                    ''', (reg_id, hash_pw(reg_pw), reg_name.strip(), reg_email.strip(), formatted_phone, user_ip, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+                    ''', (id_val, hash_pw(reg_pw), name_val, reg_email.strip(), formatted_phone, user_ip, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
                     conn.commit()
                     conn.close()
                     
