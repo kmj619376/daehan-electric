@@ -5,6 +5,7 @@ import hashlib
 import uuid
 import random
 import smtplib
+import time
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta
@@ -179,12 +180,28 @@ def show_duplicate_login_dialog():
         st.rerun()
 
 # ------------------------------------------------------------------------------
-# 2. URL 청정화 및 동시 접속 실시간 통제 (5초 자동 감지 스크립트 포함)
+# 2. URL 청정화 및 동시 접속 / 5분 비활동 자동 로그아웃 통제
 # ------------------------------------------------------------------------------
 if "session" in st.query_params:
     st.query_params.clear()
 
+# 5분(300초) 타임아웃 처리
+TIMEOUT_SECONDS = 300
+
 if st.session_state.get('logged_in', False):
+    current_time = time.time()
+    last_activity = st.session_state.get('last_activity', current_time)
+    
+    # 5분 이상 활동이 없는 경우 자동 로그아웃
+    if current_time - last_activity > TIMEOUT_SECONDS:
+        st.session_state['logged_in'] = False
+        st.session_state['user_info'] = None
+        st.session_state['timeout_logout'] = True
+        st.rerun()
+    else:
+        # 마지막 활동 시간 업데이트
+        st.session_state['last_activity'] = current_time
+
     current_user_id = st.session_state['user_info']['username']
     current_session_id = st.session_state['user_info'].get('session', '')
     
@@ -218,6 +235,11 @@ if not st.session_state.get('logged_in', False):
     st.subheader("🔒 사용자 인증 및 승인이 되어야 접속 가능")
     st.caption(f"🖥️ 현재 접속 IP: **{user_ip}**")
     
+    # 5분 타임아웃 안내 출력
+    if st.session_state.get('timeout_logout', False):
+        st.warning("⚠️ 보안을 위해 5분간 활동이 없어 자동 로그아웃되었습니다. 다시 로그인해 주세요.")
+        st.session_state['timeout_logout'] = False
+        
     tab1, tab2 = st.tabs(["🔑 로그인", "📝 회원가입 신청"])
     
     with tab1:
@@ -262,6 +284,7 @@ if not st.session_state.get('logged_in', False):
                     conn.close()
                     
                     st.session_state['logged_in'] = True
+                    st.session_state['last_activity'] = time.time() # 타임아웃 기준시간 기록
                     st.session_state['user_info'] = {
                         "username": username, 
                         "name": name, 
