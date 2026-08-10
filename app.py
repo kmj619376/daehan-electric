@@ -229,11 +229,11 @@ if not st.session_state.get('logged_in', False):
                 
     with tab2:
         st.markdown("### 회원가입 신청")
-        st.info("💡 개인 이메일 인증번호 확인 후 가입 신청이 가능합니다. 신청 후 대표님(관리자)의 최종 승인을 받아야 접속됩니다.")
+        st.info("💡 개인 이메일 인증번호 확인 후 가입 신청이 가능합니다. 신청 후 관리자의 최종 승인을 받아야 접속됩니다.")
         
         reg_id = st.text_input("사용할 아이디 (ID)", key="reg_id")
-        reg_name = st.text_input("이름 / 회사명", key="reg_name")
-        reg_phone = st.text_input("휴대폰 번호 (예: 010-1234-5678)", key="reg_phone")
+        reg_name = st.text_input("이름 / 회사명 (3글자 이상)", key="reg_name")
+        reg_phone = st.text_input("휴대폰 번호 (11자리, 예: 01012345678 또는 010-1234-5678)", key="reg_phone")
         
         col_e1, col_e2 = st.columns([3, 1])
         with col_e1:
@@ -289,13 +289,23 @@ if not st.session_state.get('logged_in', False):
             if not reg_pw.strip(): missing_fields.append("비밀번호")
             if not reg_pw_confirm.strip(): missing_fields.append("비밀번호 확인")
 
+            # 하이픈(-) 제거 후 숫자 11자리 체크
+            clean_phone = reg_phone.replace("-", "").strip()
+
             if missing_fields:
                 st.error(f"❌ 아래 항목이 입력되지 않았습니다: **{', '.join(missing_fields)}**")
+            elif len(reg_name.strip()) < 3:
+                st.error("❌ 이름 / 회사명은 최소 3글자 이상 입력해 주세요.")
+            elif not clean_phone.isdigit() or len(clean_phone) != 11:
+                st.error("❌ 휴대폰 번호는 하이픈(-) 포함 여부와 상관없이 숫자 11자리로 입력해 주세요. (예: 01012345678)")
             elif reg_pw != reg_pw_confirm:
                 st.error("❌ 비밀번호와 비밀번호 확인이 일치하지 않습니다.")
             elif not st.session_state.get('email_verified', False):
                 st.error("❌ 이메일 [✅ 인증번호 확인] 버튼을 누르고 인증을 완료해 주세요.")
             else:
+                # 11자리 숫자를 010-XXXX-XXXX 형식으로 자동 예쁘게 변환
+                formatted_phone = f"{clean_phone[:3]}-{clean_phone[3:7]}-{clean_phone[7:]}"
+                
                 conn = sqlite3.connect(DB_FILE)
                 c = conn.cursor()
                 
@@ -307,7 +317,7 @@ if not st.session_state.get('logged_in', False):
                     c.execute('''
                         INSERT INTO users (username, password, name, email, phone, role, status, ip_address, created_at)
                         VALUES (?, ?, ?, ?, ?, 'user', 'pending', ?, ?)
-                    ''', (reg_id, hash_pw(reg_pw), reg_name, reg_email, reg_phone, user_ip, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+                    ''', (reg_id, hash_pw(reg_pw), reg_name.strip(), reg_email.strip(), formatted_phone, user_ip, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
                     conn.commit()
                     conn.close()
                     
@@ -315,7 +325,7 @@ if not st.session_state.get('logged_in', False):
                     if 'code_email_target' in st.session_state: del st.session_state['code_email_target']
                     if 'email_verified' in st.session_state: del st.session_state['email_verified']
                     
-                    st.success("🎉 이메일 인증 및 가입 신청이 성공적으로 완료되었습니다! 대표님(관리자)이 승인해 주시면 로그인이 가능합니다.")
+                    st.success("🎉 이메일 인증 및 가입 신청이 성공적으로 완료되었습니다! 관리자 승인해 주시면 로그인이 가능합니다.")
     st.stop()
 
 # ------------------------------------------------------------------------------
