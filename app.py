@@ -36,6 +36,7 @@ FORBIDDEN_WORDS = [
     "아직없음", "없음", "테스트", "모름", "미정", "개인", "임시", "무명", "blank",
     "test", "none", "null", "admin", "undefined", "무소속", "아무나", "아무개", "익명",
     "aaa", "bbb", "ccc", "asdf", "qwer", "1234", "0000",
+    "가나다라", "나다라마", "마바사아", "자차카타", "파하가나",
     "시발", "씨발", "씨팔", "씨뱔", "시뱔", "쌰발", "씨바", "시바", "씨빨", "시빨",
     "ㅅㅂ", "ㅆㅂ", "ㅅㅣ발", "씨1발", "시~발", "시.발", "씨.발",
     "병신", "뼝신", "ㅂㅅ", "ㅂ~ㅅ", "ㅄ",
@@ -343,20 +344,24 @@ if not st.session_state.get('logged_in', False):
             else:
                 st.markdown("<span style='color:#2e7d32; font-weight:bold;'>✅ 올바른 아이디 형식입니다.</span>", unsafe_allow_html=True)
 
-        # 1) 이름/회사명 실시간 검증
+        # 1) 이름/회사명 실시간 검증 (연속 패턴 가나다라, abcd, ㄱㄱㄱ 등 전면 차단)
         reg_name = st.text_input("이름 / 회사명 (3글자 이상)", key="reg_name")
         name_val = reg_name.strip()
         
         is_jamo_repeat = bool(re.search(r'([ㄱ-ㅎㅏ-ㅣ])\1\1', name_val)) if name_val else False
+        is_char_repeat = bool(re.search(r'(.)\1\1', name_val)) if name_val else False # 가가가, 나나나 반복
+        is_hangul_seq = bool(re.search(r'(가나다|나다라|다라마|라마바|마바사|바사아|사아자|아자차|자차카|차카타|카타파|타파하)', name_val)) if name_val else False # 가나다라 패턴
+        is_alphabet_seq = bool(re.search(r'(abcd|bcde|cdef|defg|efgh|qwer|asdf|zxcv)', name_val.lower())) if name_val else False
+        
         clean_name_check = re.sub(r'[^a-zA-Z0-9가-힣]', '', name_val.lower())
         
         if name_val:
             if len(name_val) < 3:
                 st.markdown("<span style='color:#d32f2f; font-weight:bold;'>❌ 최소 3글자 이상 입력해야 합니다.</span>", unsafe_allow_html=True)
-            elif is_jamo_repeat or any(forbidden in clean_name_check for forbidden in FORBIDDEN_WORDS):
+            elif is_jamo_repeat or is_char_repeat or is_hangul_seq or is_alphabet_seq or any(forbidden in clean_name_check for forbidden in FORBIDDEN_WORDS):
                 st.markdown("""
                 <div style="color:#d32f2f; font-weight:bold; font-size:14px; margin-top:4px;">
-                    ❌ 올바르지 않은 문구(미정, 장난성 초성 ㄱㄱㄱ/ㅋㅋㅋ, 무의미한 단어, 비속어)는 사용 불가능합니다. <br>
+                    ❌ 올바르지 않은 문구(미정, 가나다라, ㄱㄱㄱ, 동일문자 반복, 비속어)는 사용 불가능합니다. <br>
                     ⚠️ 허위/장난 정보 가입 시 관리자에 의해 서비스 이용이 즉시 차단될 수 있습니다.
                 </div>
                 """, unsafe_allow_html=True)
@@ -420,26 +425,25 @@ if not st.session_state.get('logged_in', False):
         if st.session_state.get('email_verified', False):
             st.caption("✅ 이메일 인증이 완료되었습니다.")
 
-        # 4) 비밀번호 실시간 극강 검증 (중복/연속/ID/전화번호/이메일/생년월일 전면 차단)
+        # 4) 비밀번호 실시간 극강 검증
         reg_pw = st.text_input("비밀번호 (6자 이상, 영문+숫자 필수)", type="password", key="reg_pw")
         
         has_letter = bool(re.search(r'[a-zA-Z]', reg_pw)) if reg_pw else False
         has_digit = bool(re.search(r'\d', reg_pw)) if reg_pw else False
         
-        # 보안 검증 항목들
-        pw_repeat = bool(re.search(r'(.)\1\1', reg_pw)) if reg_pw else False  # 연속 3회 중복 (aaa, 111 등)
-        is_seq_pattern = bool(re.search(r'(1234|2345|3456|4567|5678|6789|0123|abcd|qwer|asdf)', reg_pw.lower())) if reg_pw else False # 연속 패턴
+        pw_repeat = bool(re.search(r'(.)\1\1', reg_pw)) if reg_pw else False
+        is_seq_pattern = bool(re.search(r'(1234|2345|3456|4567|5678|6789|0123|abcd|qwer|asdf)', reg_pw.lower())) if reg_pw else False
         
-        contains_id = (id_val.lower() in reg_pw.lower() or id_val in reg_pw) if (id_val and len(id_val)>=3) else False # ID 차용
+        contains_id = (id_val.lower() in reg_pw.lower() or id_val in reg_pw) if (id_val and len(id_val)>=3) else False
         
         phone_middle = clean_phone[3:7] if len(clean_phone) == 11 else ""
         phone_last = clean_phone[7:] if len(clean_phone) == 11 else ""
-        contains_phone = ((phone_middle in reg_pw) or (phone_last in reg_pw)) if (phone_middle and phone_last) else False # 전화번호 차용
+        contains_phone = ((phone_middle in reg_pw) or (phone_last in reg_pw)) if (phone_middle and phone_last) else False
         
         email_prefix = reg_email.split("@")[0] if "@" in reg_email else ""
-        contains_email = (email_prefix.lower() in reg_pw.lower()) if (email_prefix and len(email_prefix)>=3) else False # 이메일 차용
+        contains_email = (email_prefix.lower() in reg_pw.lower()) if (email_prefix and len(email_prefix)>=3) else False
         
-        is_birth_pattern = bool(re.search(r'(19[5-9]\d|20[0-2]\d)(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])', reg_pw)) or bool(re.search(r'(\d{2})(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])', reg_pw)) if reg_pw else False # 6/8자리 생년월일
+        is_birth_pattern = bool(re.search(r'(19[5-9]\d|20[0-2]\d)(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])', reg_pw)) or bool(re.search(r'(\d{2})(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])', reg_pw)) if reg_pw else False
 
         is_valid_pw = (
             len(reg_pw) >= 6 and 
@@ -498,8 +502,8 @@ if not st.session_state.get('logged_in', False):
                 st.error("❌ 아이디 조건을 확인해 주세요. (4자 이상, 영문 포함 필수, 숫자만 사용 및 반복문자 금지)")
             elif len(name_val) < 3:
                 st.error("❌ 이름 / 회사명은 최소 3글자 이상 입력해 주세요.")
-            elif is_jamo_repeat or any(forbidden in clean_name_check for forbidden in FORBIDDEN_WORDS):
-                st.error("❌ 올바른 이름 또는 회사명을 입력해 주세요. (무의미한 문구, 장난성 초성, 비속어, '미정/없음' 등은 가입 불가능하며 관리자에 의해 차단될 수 있습니다)")
+            elif is_jamo_repeat or is_char_repeat or is_hangul_seq or is_alphabet_seq or any(forbidden in clean_name_check for forbidden in FORBIDDEN_WORDS):
+                st.error("❌ 올바른 이름 또는 회사명을 입력해 주세요. (무의미한 문구, 가나다라, ㄱㄱㄱ, 비속어, '미정/없음' 등은 가입 불가능하며 관리자에 의해 차단될 수 있습니다)")
             elif not clean_phone.isdigit() or len(clean_phone) != 11:
                 st.error("❌ 휴대폰 번호는 하이픈(-) 포함 여부와 상관없이 숫자 11자리로 입력해 주세요. (예: 01012345678)")
             elif not is_valid_pw:
