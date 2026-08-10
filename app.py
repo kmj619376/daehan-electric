@@ -248,26 +248,46 @@ if not st.session_state.get('logged_in', False):
                     code = str(random.randint(100000, 999999))
                     st.session_state['email_code'] = code
                     st.session_state['code_email_target'] = reg_email
+                    st.session_state['email_verified'] = False
                     ok, msg = send_verification_email(reg_email, code)
                     if ok:
                         st.success("📩 입력하신 이메일로 6자리 인증번호가 발송되었습니다. 이메일함을 확인해 주세요!")
                     else:
                         st.error(msg)
                         
-        reg_code = st.text_input("이메일로 수신된 6자리 인증번호", key="reg_code")
+        col_c1, col_c2 = st.columns([3, 1])
+        with col_c1:
+            reg_code = st.text_input("이메일로 수신된 6자리 인증번호", key="reg_code")
+        with col_c2:
+            st.write("")
+            st.write("")
+            if st.button("✅ 인증번호 확인", use_container_width=True):
+                saved_code = st.session_state.get('email_code', None)
+                target_email = st.session_state.get('code_email_target', None)
+                
+                if not saved_code or not reg_code:
+                    st.error("인증번호를 발송받은 후 입력해 주세요.")
+                elif reg_code == saved_code and reg_email == target_email:
+                    st.session_state['email_verified'] = True
+                    st.success("🎉 인증번호가 일치합니다! (인증 완료)")
+                else:
+                    st.session_state['email_verified'] = False
+                    st.error("❌ 인증번호가 일치하지 않습니다. 다시 확인해 주세요.")
+
+        # 인증 성공 시 안내 메시지
+        if st.session_state.get('email_verified', False):
+            st.caption("✅ 이메일 인증이 완료되었습니다.")
+
         reg_pw = st.text_input("비밀번호", type="password", key="reg_pw")
         reg_pw_confirm = st.text_input("비밀번호 확인", type="password", key="reg_pw_confirm")
         
         if st.button("가입 신청하기", type="primary", use_container_width=True):
-            saved_code = st.session_state.get('email_code', None)
-            target_email = st.session_state.get('code_email_target', None)
-            
             if not reg_id or not reg_name or not reg_phone or not reg_email or not reg_pw:
                 st.error("모든 필수 항목을 입력해 주세요.")
             elif reg_pw != reg_pw_confirm:
                 st.error("비밀번호가 일치하지 않습니다.")
-            elif not saved_code or reg_code != saved_code or reg_email != target_email:
-                st.error("❌ 이메일 인증번호가 일치하지 않거나 인증을 완료하지 않았습니다.")
+            elif not st.session_state.get('email_verified', False):
+                st.error("❌ 이메일 [인증번호 확인] 버튼을 눌러 인증을 완료해 주세요.")
             else:
                 conn = sqlite3.connect(DB_FILE)
                 c = conn.cursor()
@@ -285,8 +305,12 @@ if not st.session_state.get('logged_in', False):
                     conn.close()
                     
                     # 사용된 인증 세션 초기화
-                    del st.session_state['email_code']
-                    del st.session_state['code_email_target']
+                    if 'email_code' in st.session_state:
+                        del st.session_state['email_code']
+                    if 'code_email_target' in st.session_state:
+                        del st.session_state['code_email_target']
+                    if 'email_verified' in st.session_state:
+                        del st.session_state['email_verified']
                     
                     st.success("🎉 이메일 인증 및 가입 신청이 성공적으로 완료되었습니다! 대표님(관리자)이 승인해 주시면 로그인이 가능합니다.")
     st.stop()
