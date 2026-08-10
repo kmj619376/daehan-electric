@@ -7,7 +7,7 @@ import random
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from datetime import datetime
+from datetime import datetime, timedelta
 import streamlit as st
 import pandas as pd
 import openpyxl
@@ -98,11 +98,12 @@ def init_db():
             ip_address TEXT,
             session_id TEXT,
             pin_code TEXT,
+            expires_at TEXT,
             created_at TEXT NOT NULL
         )
     ''')
     
-    for col in ["email", "phone", "ip_address", "session_id", "pin_code"]:
+    for col in ["email", "phone", "ip_address", "session_id", "pin_code", "expires_at"]:
         try:
             c.execute(f"ALTER TABLE users ADD COLUMN {col} TEXT")
         except Exception:
@@ -130,12 +131,12 @@ def init_db():
     c.execute("SELECT * FROM users WHERE username=?", (admin_id,))
     if not c.fetchone():
         c.execute('''
-            INSERT INTO users (username, password, name, email, phone, role, status, ip_address, session_id, pin_code, created_at)
-            VALUES (?, ?, '최고관리자', 'admin@daehan.com', '010-0000-0000', 'admin', 'approved', '관리자PC', '', '000000', ?)
+            INSERT INTO users (username, password, name, email, phone, role, status, ip_address, session_id, pin_code, expires_at, created_at)
+            VALUES (?, ?, '최고관리자', 'admin@daehan.com', '010-0000-0000', 'admin', 'approved', '관리자PC', '', '000000', '2099-12-31 23:59:59', ?)
         ''', (admin_id, admin_pass, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
     else:
         c.execute('''
-            UPDATE users SET password=?, role='admin', status='approved' WHERE username=?
+            UPDATE users SET password=?, role='admin', status='approved', expires_at='2099-12-31 23:59:59' WHERE username=?
         ''', (admin_pass, admin_id))
     
     conn.commit()
@@ -201,13 +202,28 @@ if not st.session_state.get('logged_in', False):
         if submit_login:
             conn = sqlite3.connect(DB_FILE)
             c = conn.cursor()
-            c.execute("SELECT username, name, role, status FROM users WHERE username=? AND password=?", 
+            c.execute("SELECT username, name, role, status, expires_at FROM users WHERE username=? AND password=?", 
                       (login_id, hash_pw(login_pw)))
             user = c.fetchone()
             conn.close()
             
             if user:
-                username, name, role, status = user
+                username, name, role, status, expires_at = user
+                
+                # 30일/기간 만료 검증 (관리자는 제외)
+                if role != "admin" and expires_at:
+                    try:
+                        exp_date = datetime.strptime(expires_at, "%Y-%m-%d %H:%M:%S")
+                        if datetime.now() > exp_date:
+                            conn = sqlite3.connect(DB_FILE)
+                            c = conn.cursor()
+                            c.execute("UPDATE users SET status='expired' WHERE username=?", (username,))
+                            conn.commit()
+                            conn.close()
+                            status = "expired"
+                    except Exception:
+                        pass
+
                 if status == "approved":
                     new_session = str(uuid.uuid4())
                     conn = sqlite3.connect(DB_FILE)
@@ -222,6 +238,8 @@ if not st.session_state.get('logged_in', False):
                     st.rerun()
                 elif status == "pending":
                     st.warning("⏳ 아직 관리자 승인 대기 중인 계정입니다. 관리자가 가입을 승인해야 이용할 수 있습니다.")
+                elif status == "expired":
+                    st.error("⌛ 30일 무료 체험(또는 사용 기간)이 만료되었습니다. 기간 연장 및 유료 전환은 관리자에게 문의하세요.")
                 else:
                     st.error("🚫 사용이 차단되거나 비활성화된 계정입니다.")
             else:
@@ -229,7 +247,7 @@ if not st.session_state.get('logged_in', False):
                 
     with tab2:
         st.markdown("### 회원가입 신청")
-        st.info("💡 개인 이메일 인증번호 확인 후 가입 신청이 가능합니다. 신청 후 대표님(관리자)의 최종 승인을 받아야 접속됩니다.")
+        st.info("💡 개인 이메일 인증번호 확인 후 가입 신청이 가능합니다. 신청 후 대표님(관리자)의 승인을 받으면 30일 무료 체험이 시작됩니다.")
         
         reg_id = st.text_input("사용할 아이디 (ID)", key="reg_id")
         reg_name = st.text_input("이름 / 회사명 (3글자 이상)", key="reg_name")
@@ -323,7 +341,7 @@ if not st.session_state.get('logged_in', False):
                     if 'code_email_target' in st.session_state: del st.session_state['code_email_target']
                     if 'email_verified' in st.session_state: del st.session_state['email_verified']
                     
-                    st.success("🎉 이메일 인증 및 가입 신청이 성공적으로 완료되었습니다! 대표님(관리자)이 승인해 주시면 로그인이 가능합니다.")
+                    st.success("🎉 이메일 인증 및 가입 신청이 성공적으로 완료되었습니다! 대표님(관리자)이 승인해 주시면 30일 무료 체험 권한이 부여됩니다.")
     st.stop()
 
 # ------------------------------------------------------------------------------
@@ -343,33 +361,80 @@ with col_h2:
         st.rerun()
 
 # ------------------------------------------------------------------------------
-# 👑 관리자 전용 메뉴
+# 👑 관리자 전용 메뉴 (회원 승인 & 이용 기간 재발급/연장)
 # ------------------------------------------------------------------------------
 if user['role'] == 'admin':
-    with st.expander("👑 [관리자 전용] 회원 승인 및 회원 정보 관리", expanded=True):
-        admin_tab1, admin_tab2 = st.tabs(["👥 회원 승인 관리", "📜 이용 이력(로그) 보기"])
+    with st.expander("👑 [관리자 전용] 회원 승인 및 이용 기간(30일/연장) 관리", expanded=True):
+        admin_tab1, admin_tab2 = st.tabs(["👥 회원 승인 & 기간 연장 관리", "📜 이용 이력(로그) 보기"])
         
         with admin_tab1:
-            st.subheader("회원가입 신청 승인 및 상태 관리")
+            st.subheader("회원가입 승인 및 이용 기간 부여/재발급")
             conn = sqlite3.connect(DB_FILE)
-            df_users = pd.read_sql_query("SELECT username AS 아이디, name AS 이름, email AS 이메일, phone AS 연락처, role AS 권한, status AS 상태, ip_address AS 접속IP, created_at AS 가입일시 FROM users", conn)
-            st.dataframe(df_users, use_container_width=True)
+            df_users = pd.read_sql_query("SELECT username AS 아이디, name AS 이름, email AS 이메일, phone AS 연락처, role AS 권한, status AS 상태, expires_at AS 만료일시, ip_address AS 접속IP, created_at AS 가입일시 FROM users", conn)
             
-            c1, c2, c3 = st.columns([4, 4, 2])
+            # 남은 일수 표시 계산
+            now_dt = datetime.now()
+            def calc_remaining_days(row):
+                if row['권한'] == 'admin': return "무제한 (관리자)"
+                if not row['만료일시']: return "미설정 (대기중)"
+                try:
+                    exp_dt = datetime.strptime(row['만료일시'], "%Y-%m-%d %H:%M:%S")
+                    diff_days = (exp_dt - now_dt).days
+                    if diff_days < 0: return "⌛ 만료됨"
+                    return f"🟢 {diff_days}일 남음"
+                except Exception:
+                    return "-"
+            
+            df_users['남은기간'] = df_users.apply(calc_remaining_days, axis=1)
+            
+            # 컬럼 순서 재정리
+            cols_order = ['아이디', '이름', '상태', '남은기간', '만료일시', '연락처', '이메일', '가입일시', '접속IP']
+            st.dataframe(df_users[[c for c in cols_order if c in df_users.columns]], use_container_width=True)
+            
+            st.markdown("#### ⚙️ 회원 승인 / 상태 및 이용 기간 선택 설정")
+            c1, c2, c3, c4 = st.columns([3, 3, 3, 2])
             with c1:
-                target_user = st.selectbox("승인/상태 변경 대상 선택", df_users["아이디"].tolist())
+                target_user = st.selectbox("대상 회원 선택", df_users["아이디"].tolist())
             with c2:
-                new_status = st.selectbox("변경할 상태 선택", ["approved (승인 - 접속허용)", "pending (대기)", "rejected (차단)"])
+                new_status = st.selectbox("변경할 상태 선택", [
+                    "approved (승인 - 접속허용)", 
+                    "pending (대기)", 
+                    "expired (만료 처리)", 
+                    "rejected (차단)"
+                ])
             with c3:
+                period_option = st.selectbox("부여할 이용 기간 (오늘 기준)", [
+                    "30일 (기본 무료체험)",
+                    "7일 (단기 체험)",
+                    "90일 (3개월 연장)",
+                    "180일 (6개월 연장)",
+                    "365일 (1년 구독)",
+                    "기존 만료일 유지 (변경 안 함)"
+                ])
+            with c4:
                 st.write("")
                 st.write("")
-                if st.button("상태 변경 적용", type="primary"):
+                if st.button("상태 및 기간 적용", type="primary", use_container_width=True):
                     status_code = new_status.split()[0]
+                    days_map = {
+                        "30일 (기본 무료체험)": 30,
+                        "7일 (단기 체험)": 7,
+                        "90일 (3개월 연장)": 90,
+                        "180일 (6개월 연장)": 180,
+                        "365일 (1년 구독)": 365
+                    }
+                    
                     c = conn.cursor()
-                    c.execute("UPDATE users SET status=? WHERE username=?", (status_code, target_user))
+                    if period_option in days_map and status_code == "approved":
+                        new_expires = (datetime.now() + timedelta(days=days_map[period_option])).strftime("%Y-%m-%d %H:%M:%S")
+                        c.execute("UPDATE users SET status=?, expires_at=? WHERE username=?", (status_code, new_expires, target_user))
+                        st.success(f"🎉 [{target_user}] 회원의 상태가 [승인]으로 설정되었으며, 오늘부터 {days_map[period_option]}일간({new_expires}까지) 이용 권한이 부여되었습니다!")
+                    else:
+                        c.execute("UPDATE users SET status=? WHERE username=?", (status_code, target_user))
+                        st.success(f"[{target_user}] 회원의 상태가 [{status_code}]로 즉시 변경되었습니다!")
+                    
                     conn.commit()
                     conn.close()
-                    st.success(f"[{target_user}] 회원 상태가 [{status_code}]로 즉시 변경되었습니다!")
                     st.rerun()
             conn.close()
             
@@ -381,7 +446,7 @@ if user['role'] == 'admin':
             conn.close()
 
 # ------------------------------------------------------------------------------
-# 5. Gemini AI 도면 분석 함수 (구분='부속' 정의 전면 제거)
+# 5. Gemini AI 도면 분석 함수
 # ------------------------------------------------------------------------------
 def analyze_drawing_with_gemini(image_pil, api_key, file_name, current_user, ip_addr):
     try:
@@ -396,7 +461,7 @@ def analyze_drawing_with_gemini(image_pil, api_key, file_name, current_user, ip_
         2. 구분 항목 규칙:
            - 메인 차단기: "MAIN"
            - 분기 차단기: "분기"
-           - 부속 자재(콘센트, 단자대, 계량기 등): "MAIN" 또는 "분기"로 구분하거나, "부속"이라는 단어는 절대로 사용하지 마세요. (대신 종류 명칭을 명확히 할 것)
+           - 부속 자재(콘센트, 단자대, 계량기 등): "MAIN" 또는 "분기"로 구분하거나, "부속"이라는 단어는 절대로 사용하지 마세요.
         3. 종류: MCCB, ELB, 콘센트, 단자대, 계량기 등
         4. 극수 및 용량: 3P, 2P / 50AF/40AT, N.T/E.T 등
         5. 부하명 및 수량, 단가
@@ -548,10 +613,10 @@ def generate_excel_quote(df_items, margin_rate, labor_main, labor_branch, shippi
     return output.getvalue()
 
 # ------------------------------------------------------------------------------
-# 6. 다중 도면 업로드 및 작업 메인 UI (드래그 앤 드롭 안내 문구 강화)
+# 6. 다중 도면 업로드 및 작업 메인 UI
 # ------------------------------------------------------------------------------
 uploaded_files = st.file_uploader(
-    "🖼️ 결선도 도면 마우스로 드래그하여 업로드 (PNG, JPG, 도면 복수 선택 가능)", 
+    "🖼️ 결선도 도면 여러 장 마우스로 드래그하여 업로드 (PNG, JPG, 복수 선택 가능)", 
     type=["png", "jpg", "jpeg"],
     accept_multiple_files=True
 )
