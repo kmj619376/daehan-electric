@@ -120,11 +120,12 @@ cookie_manager = stx.CookieManager()
 user_ip = get_remote_ip()
 
 # ------------------------------------------------------------------------------
-# 2. 쿠키 기반 자동 로그인 & 동시 접속 모니터링 (1계정 1기기)
+# 2. 쿠키 기반 자동 로그인 복원 & 동시 접속 통제 (F5 새로고침 방지)
 # ------------------------------------------------------------------------------
 auth_user = cookie_manager.get(cookie="daehan_user")
 auth_session = cookie_manager.get(cookie="daehan_session")
 
+# F5 새로고침 시 쿠키에서 세션을 복원
 if auth_user and auth_session and not st.session_state.get('logged_in', False):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
@@ -136,6 +137,7 @@ if auth_user and auth_session and not st.session_state.get('logged_in', False):
         st.session_state['logged_in'] = True
         st.session_state['user_info'] = {"username": user_db[0], "name": user_db[1], "role": user_db[2], "ip": user_ip, "session": auth_session}
 
+# 다른 기기에서 중복 로그인하여 DB 세션 ID가 변경된 경우 즉시 강제 로그아웃
 if st.session_state.get('logged_in', False):
     current_user_id = st.session_state['user_info']['username']
     current_session_id = st.session_state['user_info'].get('session', '')
@@ -190,6 +192,7 @@ if not st.session_state.get('logged_in', False):
                     st.session_state['logged_in'] = True
                     st.session_state['user_info'] = {"username": username, "name": name, "role": role, "ip": user_ip, "session": new_session}
                     
+                    # 브라우저 쿠키에 로그인 정보 저장 (12시간 유효)
                     cookie_manager.set("daehan_user", username, max_age=12*3600)
                     cookie_manager.set("daehan_session", new_session, max_age=12*3600)
                     st.success(f"{name}님, 환영합니다!")
@@ -441,7 +444,6 @@ def generate_excel_quote(df_items, margin_rate, labor_main, labor_branch, shippi
         amt_cell = ws_mat.cell(row=r, column=9, value=f"=G{r}*H{r}")
         amt_cell.number_format = "#,##0"
 
-    # 빈 행을 제외하고 실제 분전반명만 추려내기
     valid_df = df_items[df_items["분전반명"].astype(str).str.strip() != ""]
     panels = valid_df["분전반명"].unique() if len(valid_df) > 0 else ["기본분전반"]
     
@@ -492,7 +494,6 @@ if uploaded_files:
             progress_bar = st.progress(0)
             status_text = st.empty()
             
-            # 빈 행 구분을 위한 템플릿
             blank_row = {"분전반명": "", "구분": "", "종류": "", "극수": "", "용량": "", "부하명": "", "수량": None, "단가": None}
             
             for idx, file in enumerate(uploaded_files):
@@ -501,7 +502,6 @@ if uploaded_files:
                 parsed_list = analyze_drawing_with_gemini(img, GEMINI_API_KEY, file.name, user['username'], user_ip)
                 
                 if parsed_list:
-                    # 이전 도면 결과가 존재하면 결과 사이에 빈 한 줄 삽입
                     if all_results:
                         all_results.append(blank_row)
                     all_results.extend(parsed_list)
