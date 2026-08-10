@@ -122,7 +122,6 @@ user_ip = get_remote_ip()
 # ------------------------------------------------------------------------------
 url_session = st.query_params.get("session", None)
 
-# F5 새로고침 시 URL의 세션 토큰으로 로그인 복원
 if url_session and not st.session_state.get('logged_in', False):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
@@ -134,7 +133,6 @@ if url_session and not st.session_state.get('logged_in', False):
         st.session_state['logged_in'] = True
         st.session_state['user_info'] = {"username": user_db[0], "name": user_db[1], "role": user_db[2], "ip": user_ip, "session": url_session}
 
-# 다른 기기에서 새로 로그인하여 DB 세션 ID가 변경된 경우 즉시 강제 로그아웃
 if st.session_state.get('logged_in', False):
     current_user_id = st.session_state['user_info']['username']
     current_session_id = st.session_state['user_info'].get('session', '')
@@ -191,7 +189,6 @@ if not st.session_state.get('logged_in', False):
                     st.session_state['logged_in'] = True
                     st.session_state['user_info'] = {"username": username, "name": name, "role": role, "ip": user_ip, "session": new_session}
                     
-                    # URL 파라미터에 세션 등록하여 F5 누적 방어
                     st.query_params["session"] = new_session
                     st.success(f"{name}님, 환영합니다!")
                     st.rerun()
@@ -465,7 +462,7 @@ def generate_excel_quote(df_items, margin_rate, labor_main, labor_branch, shippi
     return output.getvalue()
 
 # ------------------------------------------------------------------------------
-# 6. 다중 도면 업로드 및 작업 메인 UI (도면별 한 칸 띄우기 적용)
+# 6. 다중 도면 업로드 및 작업 메인 UI (지원 파일 서식 가이드 추가)
 # ------------------------------------------------------------------------------
 uploaded_files = st.file_uploader(
     "🖼️ 결선도 도면 여러 장 업로드 (PNG, JPG, 복수 선택 가능)", 
@@ -487,8 +484,13 @@ if uploaded_files:
             st.divider()
         
     with col2:
+        # 전체 도면 통합 해석 제목 옆/아래에 지원 파일 정보 추가
         st.subheader("🔍 전체 도면 통합 해석")
-        if st.button("🚀 전체 도면 한번에 분석 시작", type="primary"):
+        st.caption("📌 **지원 파일 형식**: `PNG`, `JPG`, `JPEG` (이미지 용량 최대 200MB 지원)")
+        st.info("💡 선명하고 해상도가 높은 이미지일수록 AI의 차단기 및 부품 문자 인식률이 대폭 올라갑니다.")
+        st.write("")
+        
+        if st.button("🚀 전체 도면 한번에 분석 시작", type="primary", use_container_width=True):
             all_results = []
             progress_bar = st.progress(0)
             status_text = st.empty()
