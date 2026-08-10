@@ -307,7 +307,7 @@ if not st.session_state.get('logged_in', False):
                 
     with tab2:
         st.markdown("### 회원가입 신청")
-        st.info("💡 개인 이메일 인증번호 확인 후 가입 신청이 가능합니다. 신청 후 대표님(관리자)의 승인을 받으면 7일 무료 체험이 시작됩니다.")
+        st.info("💡 개인 이메일 인증번호 확인 후 가입신청이 가능합니다. 신청 후 관리자의 승인을 득하면 7일 무료 체험이 시작됩니다. 7일 사용후 추가 연장이 필요하면 관리자에게 요청하세요.!!!")
         
         reg_id = st.text_input("사용할 아이디 (ID)", key="reg_id")
         reg_name = st.text_input("이름 / 회사명 (3글자 이상)", key="reg_name")
@@ -401,7 +401,7 @@ if not st.session_state.get('logged_in', False):
                     if 'code_email_target' in st.session_state: del st.session_state['code_email_target']
                     if 'email_verified' in st.session_state: del st.session_state['email_verified']
                     
-                    st.success("🎉 이메일 인증 및 가입 신청이 성공적으로 완료되었습니다! 대표님(관리자)이 승인해 주시면 7일 무료 체험 권한이 부여됩니다.")
+                    st.success("🎉 이메일 인증 및 가입 신청이 성공적으로 완료되었습니다! 프로그램 사용하시면서 궁금한 사항이 있으시면 관리자에게 문의 주세요!!")
     st.stop()
 
 # ------------------------------------------------------------------------------
