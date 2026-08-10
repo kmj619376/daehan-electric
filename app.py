@@ -30,6 +30,13 @@ EXTRA_SHIPPING = 100000     # 현장 운반비 및 양중비
 
 DEFAULT_COLUMNS = ["분전반명", "구분", "종류", "극수", "용량", "부하명", "수량", "단가"]
 
+# 🚫 금지어 및 비속어 목록 (무의미한 단어, 욕설, 테스트용 문구 차단)
+FORBIDDEN_WORDS = [
+    "아직없음", "없음", "테스트", "모름", "미정", "개인", "임시", "무명", "blank",
+    "test", "none", "null", "admin", "undefined",
+    "시발", "씨발", "병신", "개새끼", "존나", "좆", "지랄", "새끼", "등신", "미친", "바보"
+]
+
 # ------------------------------------------------------------------------------
 # 🌐 접속자 IP 주소 추출 함수
 # ------------------------------------------------------------------------------
@@ -185,21 +192,18 @@ def show_duplicate_login_dialog():
 if "session" in st.query_params:
     st.query_params.clear()
 
-# 5분(300초) 타임아웃 처리
 TIMEOUT_SECONDS = 300
 
 if st.session_state.get('logged_in', False):
     current_time = time.time()
     last_activity = st.session_state.get('last_activity', current_time)
     
-    # 5분 이상 활동이 없는 경우 자동 로그아웃
     if current_time - last_activity > TIMEOUT_SECONDS:
         st.session_state['logged_in'] = False
         st.session_state['user_info'] = None
         st.session_state['timeout_logout'] = True
         st.rerun()
     else:
-        # 마지막 활동 시간 업데이트
         st.session_state['last_activity'] = current_time
 
     current_user_id = st.session_state['user_info']['username']
@@ -214,7 +218,6 @@ if st.session_state.get('logged_in', False):
     if db_session and db_session[0] != current_session_id:
         st.session_state['show_dup_modal'] = True
     else:
-        # 로그인 상태일 때 5초마다 배경에서 중복 접속 여부 자동 체크
         st.components.v1.html("""
             <script>
                 setTimeout(function(){
@@ -235,7 +238,6 @@ if not st.session_state.get('logged_in', False):
     st.subheader("🔒 사용자 인증 및 승인이 되어야 접속 가능")
     st.caption(f"🖥️ 현재 접속 IP: **{user_ip}**")
     
-    # 5분 타임아웃 안내 출력
     if st.session_state.get('timeout_logout', False):
         st.warning("⚠️ 보안을 위해 5분간 활동이 없어 자동 로그아웃되었습니다. 다시 로그인해 주세요.")
         st.session_state['timeout_logout'] = False
@@ -261,7 +263,6 @@ if not st.session_state.get('logged_in', False):
             if user:
                 username, name, role, status, expires_at = user
                 
-                # 이용 기간 만료 검증 (관리자는 제외)
                 if role != "admin" and expires_at:
                     try:
                         exp_date = datetime.strptime(expires_at, "%Y-%m-%d %H:%M:%S")
@@ -284,7 +285,7 @@ if not st.session_state.get('logged_in', False):
                     conn.close()
                     
                     st.session_state['logged_in'] = True
-                    st.session_state['last_activity'] = time.time() # 타임아웃 기준시간 기록
+                    st.session_state['last_activity'] = time.time()
                     st.session_state['user_info'] = {
                         "username": username, 
                         "name": name, 
@@ -307,7 +308,7 @@ if not st.session_state.get('logged_in', False):
                 
     with tab2:
         st.markdown("### 회원가입 신청")
-        st.info("💡 개인 이메일 인증번호 확인 후 가입신청이 가능합니다. 신청 후 관리자의 승인을 득하면 7일 무료 체험이 시작됩니다. 7일 사용후 추가 연장이 필요하면 관리자에게 요청하세요.!!!")
+        st.info("💡 개인 이메일 인증번호 확인 후 가입 신청이 가능합니다. 신청 후 대표님(관리자)의 승인을 받으면 7일 무료 체험이 시작됩니다.")
         
         reg_id = st.text_input("사용할 아이디 (ID)", key="reg_id")
         reg_name = st.text_input("이름 / 회사명 (3글자 이상)", key="reg_name")
@@ -368,11 +369,14 @@ if not st.session_state.get('logged_in', False):
             if not reg_pw_confirm.strip(): missing_fields.append("비밀번호 확인")
 
             clean_phone = reg_phone.replace("-", "").strip()
+            name_check = reg_name.strip().lower()
 
             if missing_fields:
                 st.error(f"❌ 아래 항목이 입력되지 않았습니다: **{', '.join(missing_fields)}**")
             elif len(reg_name.strip()) < 3:
                 st.error("❌ 이름 / 회사명은 최소 3글자 이상 입력해 주세요.")
+            elif any(forbidden in name_check for forbidden in FORBIDDEN_WORDS):
+                st.error("❌ 올바른 이름 또는 회사명을 입력해 주세요. (무의미한 문구, 비속어, '아직없음' 등은 가입 불가능합니다. 이름/회사명 명확하지 않으면 관리자에 의해 차단 될수도 있습니다.)")
             elif not clean_phone.isdigit() or len(clean_phone) != 11:
                 st.error("❌ 휴대폰 번호는 하이픈(-) 포함 여부와 상관없이 숫자 11자리로 입력해 주세요. (예: 01012345678)")
             elif reg_pw != reg_pw_confirm:
@@ -401,7 +405,7 @@ if not st.session_state.get('logged_in', False):
                     if 'code_email_target' in st.session_state: del st.session_state['code_email_target']
                     if 'email_verified' in st.session_state: del st.session_state['email_verified']
                     
-                    st.success("🎉 이메일 인증 및 가입 신청이 성공적으로 완료되었습니다! 프로그램 사용하시면서 궁금한 사항이 있으시면 관리자에게 문의 주세요!!")
+                    st.success("🎉 이메일 인증 및 가입 신청이 성공적으로 완료되었습니다! 대표님(관리자)이 승인해 주시면 7일 무료 체험 권한이 부여됩니다.")
     st.stop()
 
 # ------------------------------------------------------------------------------
