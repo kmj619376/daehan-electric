@@ -21,7 +21,6 @@ LABOR_RATE_MAIN = 260000    # 메인 차단기 노무비
 LABOR_RATE_BRANCH = 15000   # 분기 차단기 노무비
 EXTRA_SHIPPING = 100000     # 현장 운반비 및 양중비
 
-# 기본 표 컬럼 정의
 DEFAULT_COLUMNS = ["분전반명", "구분", "종류", "극수", "용량", "부하명", "수량", "단가"]
 
 # ------------------------------------------------------------------------------
@@ -259,7 +258,7 @@ if user['role'] == 'admin':
             conn.close()
 
 # ------------------------------------------------------------------------------
-# 5. Gemini AI 순수 도면 분석 함수
+# 5. Gemini AI 도면 분석 함수
 # ------------------------------------------------------------------------------
 def analyze_drawing_with_gemini(image_pil, api_key, file_name, current_user, ip_addr):
     try:
@@ -324,7 +323,6 @@ def analyze_drawing_with_gemini(image_pil, api_key, file_name, current_user, ip_
         
         parsed_data = json.loads(text)
         
-        # 이용 이력 DB 저장
         try:
             conn = sqlite3.connect(DB_FILE)
             c = conn.cursor()
@@ -339,7 +337,7 @@ def analyze_drawing_with_gemini(image_pil, api_key, file_name, current_user, ip_
             
         return parsed_data
     except Exception as e:
-        st.error(f"도면 분석 중 오류 발생: {e}")
+        st.error(f"[{file_name}] 분석 중 오류 발생: {e}")
         return []
 
 def generate_excel_quote(df_items, margin_rate, labor_main, labor_branch, shipping):
@@ -421,31 +419,51 @@ def generate_excel_quote(df_items, margin_rate, labor_main, labor_branch, shippi
     return output.getvalue()
 
 # ------------------------------------------------------------------------------
-# 6. 도면 업로드 및 작업 메인 UI
+# 6. 다중 도면 업로드 및 작업 메인 UI
 # ------------------------------------------------------------------------------
-uploaded_file = st.file_uploader("🖼️ 결선도 도면 업로드 (PNG, JPG)", type=["png", "jpg", "jpeg"])
+uploaded_files = st.file_uploader(
+    "🖼️ 결선도 도면 여러 장 업로드 (PNG, JPG, 복수 선택 가능)", 
+    type=["png", "jpg", "jpeg"],
+    accept_multiple_files=True
+)
 
-if uploaded_file:
+if uploaded_files:
+    st.info(f"📂 총 **{len(uploaded_files)}개**의 도면 파일이 선택되었습니다.")
+    
     col1, col2 = st.columns([1, 1])
     
     with col1:
-        st.subheader("🖼️ 업로드된 도면")
-        image = Image.open(uploaded_file)
-        st.image(image, use_container_width=True)
+        st.subheader("🖼️ 선택된 도면 미리보기")
+        for idx, file in enumerate(uploaded_files):
+            img = Image.open(file)
+            st.caption(f"📄 도면 {idx+1}: {file.name}")
+            st.image(img, use_container_width=True)
+            st.divider()
         
     with col2:
-        st.subheader("🔍 도면 해석")
-        if st.button("🚀 도면 분석 시작"):
-            with st.spinner("도면의 실제 부품 데이터를 추출하고 있습니다..."):
-                raw_data = analyze_drawing_with_gemini(image, GEMINI_API_KEY, uploaded_file.name, user['username'], user_ip)
-                if raw_data:
-                    st.session_state['extracted_data'] = pd.DataFrame(raw_data)
-                    st.success("도면 분석이 성공적으로 완료되었습니다!")
-                else:
-                    st.session_state['extracted_data'] = pd.DataFrame(columns=DEFAULT_COLUMNS)
-                    st.warning("도면에서 추출된 데이터가 없습니다.")
+        st.subheader("🔍 전체 도면 통합 해석")
+        if st.button("🚀 전체 도면 한번에 분석 시작", type="primary"):
+            all_results = []
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            
+            for idx, file in enumerate(uploaded_files):
+                status_text.text(f" 분석 중 ({idx+1}/{len(uploaded_files)}): {file.name}")
+                img = Image.open(file)
+                parsed_list = analyze_drawing_with_gemini(img, GEMINI_API_KEY, file.name, user['username'], user_ip)
+                if parsed_list:
+                    all_results.extend(parsed_list)
+                progress_bar.progress((idx + 1) / len(uploaded_files))
+                
+            status_text.text("모든 도면 분석 완료!")
+            
+            if all_results:
+                st.session_state['extracted_data'] = pd.DataFrame(all_results)
+                st.success(f"🎉 총 {len(uploaded_files)}개 도면에서 {len(all_results)}개의 항목을 성공적으로 추출했습니다!")
+            else:
+                st.session_state['extracted_data'] = pd.DataFrame(columns=DEFAULT_COLUMNS)
+                st.warning("도면에서 추출된 데이터가 없습니다.")
 
-# 초기 상태: 빈 데이터프레임 지정 (고정 샘플 제거)
 if 'extracted_data' not in st.session_state:
     st.session_state['extracted_data'] = pd.DataFrame(columns=DEFAULT_COLUMNS)
 
@@ -453,7 +471,7 @@ st.divider()
 
 col_t, col_b = st.columns([8, 2])
 with col_t:
-    st.subheader("📋 추출된 분전반별 차단기 데이터")
+    st.subheader("📋 추출된 분전반별 차단기 데이터 (통합)")
 with col_b:
     if st.button("🗑️ 표 전체 비우기"):
         st.session_state['extracted_data'] = pd.DataFrame(columns=DEFAULT_COLUMNS)
