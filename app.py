@@ -12,7 +12,7 @@ from PIL import Image
 import extra_streamlit_components as stx
 
 # ------------------------------------------------------------------------------
-# 🔑 API Key 안전 연동 (Secrets에서 불러오기 - 문자열 직접 노출 방지)
+# 🔑 API Key 안전 연동 (Secrets에서 불러오기)
 # ------------------------------------------------------------------------------
 GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", "")
 
@@ -20,6 +20,9 @@ MARGIN_RATE = 0.10          # 자재 마진율 10%
 LABOR_RATE_MAIN = 260000    # 메인 차단기 노무비
 LABOR_RATE_BRANCH = 15000   # 분기 차단기 노무비
 EXTRA_SHIPPING = 100000     # 현장 운반비 및 양중비
+
+# 기본 표 컬럼 정의
+DEFAULT_COLUMNS = ["분전반명", "구분", "종류", "극수", "용량", "부하명", "수량", "단가"]
 
 # ------------------------------------------------------------------------------
 # 🌐 접속자 IP 주소 추출 함수
@@ -77,7 +80,6 @@ def init_db():
     except Exception:
         pass
     
-    # 최고 관리자 계정 기본 생성 (syd1007 / kmj851007)
     admin_id = "syd1007"
     admin_pass = hashlib.sha256("kmj851007".encode()).hexdigest()
     
@@ -203,7 +205,7 @@ if not st.session_state.get('logged_in', False):
     st.stop()
 
 # ------------------------------------------------------------------------------
-# 4. 메인 프로그램 화면 (로그인 성공 시)
+# 4. 메인 프로그램 화면
 # ------------------------------------------------------------------------------
 user = st.session_state['user_info']
 
@@ -257,42 +259,30 @@ if user['role'] == 'admin':
             conn.close()
 
 # ------------------------------------------------------------------------------
-# 5. Gemini AI 분석 및 엑셀 생성 함수
+# 5. Gemini AI 순수 도면 분석 함수
 # ------------------------------------------------------------------------------
-def get_multi_panel_sample():
-    return [
-        {"분전반명": "TQ-1 ~ TQ-3 [3면]", "구분": "MAIN", "종류": "MCCB", "극수": "4P", "용량": "100AF/100AT", "부하명": "메인 전원", "수량": 3, "단가": 85000},
-        {"분전반명": "TQ-1 ~ TQ-3 [3면]", "구분": "분기", "종류": "ELB", "극수": "2P", "용량": "30AF/20AT", "부하명": "전등/전열", "수량": 18, "단가": 12500},
-        {"분전반명": "계단분전반 [13면]", "구분": "MAIN", "종류": "MCCB", "극수": "4P", "용량": "100AF/75AT", "부하명": "계단 메인", "수량": 13, "단가": 75000},
-        {"분전반명": "계단분전반 [13면]", "구분": "분기", "종류": "ELB", "극수": "2P", "용량": "30AF/20AT", "부하명": "계단 전등", "수량": 26, "단가": 12500},
-        {"분전반명": "동력반(P1~P3) [3면]", "구분": "MAIN", "종류": "MCCB", "극수": "4P", "용량": "225AF/150AT", "부하명": "동력 메인", "수량": 3, "단가": 150000},
-        {"분전반명": "동력반(P1~P3) [3면]", "구분": "분기", "종류": "MCCB", "극수": "3P", "용량": "50AF/30AT", "부하명": "펌프/팬 동력", "수량": 12, "단가": 32000},
-        {"분전반명": "동력반(P1~P3) [3면]", "구분": "부속", "종류": "콘센트", "극수": "2P", "용량": "16A", "부하명": "분전반 내 2구 콘센트", "수량": 4, "단가": 8000},
-        {"분전반명": "동력반(P1~P3) [3면]", "구분": "부속", "종류": "단자대", "극수": "-", "용량": "N.T / E.T", "부하명": "중성선/접지 단자대", "수량": 2, "단가": 15000},
-    ]
-
 def analyze_drawing_with_gemini(image_pil, api_key, file_name, current_user, ip_addr):
     try:
         import google.generativeai as genai
         genai.configure(api_key=api_key)
         
         prompt = """
-        이 분전반 도면 이미지에는 차단기 표 외에도 여러 가지 전기 부품 심볼이 포함되어 있습니다.
-        다음 요소들을 철저히 분석하여 JSON 배열 형태로만 반환하세요:
+        이 분전반 도면 이미지를 정확히 분석하여 도면에 실제로 존재하는 부품 요소들만 추출해 JSON 배열로 반환하세요.
 
-        1. 차단기: 메인(MCCB, ELB) 및 분기 차단기 (종류, 극수, AF/AT 용량, 부하명, 수량)
-        2. 콘센트 심볼: 도면 하단이나 옆에 배치된 2구 콘센트 기호(동그라미 2개 모양)가 있다면 종류="콘센트", 부하명="분전반 내 콘센트", 수량 정밀 카운트
-        3. 단자대 심볼: N.T(Neutral Terminal), E.T(Earth Terminal) 등 접지/중성 단자대가 표시되어 있다면 종류="단자대", 용량="N.T/E.T" 항목 추가
-        4. 계량기/부속: WHM(전력량계), 지상/벽부형 외함 등
+        [추출 규칙]
+        1. 분전반명: 도면에 기재된 분전반 이름 (예: L-1, TQ-1, 분전반 등)
+        2. 차단기: 메인(MCCB, ELB) 및 분기 차단기 (종류, 극수, AF/AT 용량, 부하명, 수량)
+        3. 콘센트: 2구 콘센트 심볼이 있는 경우 종류="콘센트", 수량 카운트
+        4. 단자대: N.T, E.T 등 접지/중성 단자대가 표시되어 있다면 종류="단자대", 용량="N.T/E.T"
+        5. 계량기: WHM(전력량계) 등
 
-        반환 JSON 형식 예시:
+        [JSON 반환 포맷 예시]
         [
-            {"분전반명": "분전반 이름(예: TQ-1)", "구분": "MAIN 또는 분기 또는 부속", "종류": "MCCB / ELB / 콘센트 / 단자대 / WHM 등", "극수": "2P/3P/4P/-", "용량": "100AF/75AT 또는 16A 등", "부하명": "부하 이름", "수량": 1, "단가": 85000}
+            {"분전반명": "L-1", "구분": "MAIN", "종류": "MCCB", "극수": "3P", "용량": "50AF/40AT", "부하명": "메인", "수량": 1, "단가": 85000},
+            {"분전반명": "L-1", "구분": "분기", "종류": "ELB", "극수": "2P", "용량": "30AF/20AT", "부하명": "L1", "수량": 1, "단가": 12500}
         ]
         
-        주의사항:
-        1. ```json 과 같은 마크다운 태그나 설명글을 절대 붙이지 말고 오직 [ ... ] 형식의 pure JSON 배열 문자열만 출력하세요.
-        2. 수량과 단가는 숫자 형태로 출력하세요.
+        주의: 마크다운 태그(```json 등) 없이 오직 pure JSON 배열만 반환하세요.
         """
         
         available_models = []
@@ -334,6 +324,7 @@ def analyze_drawing_with_gemini(image_pil, api_key, file_name, current_user, ip_
         
         parsed_data = json.loads(text)
         
+        # 이용 이력 DB 저장
         try:
             conn = sqlite3.connect(DB_FILE)
             c = conn.cursor()
@@ -349,7 +340,7 @@ def analyze_drawing_with_gemini(image_pil, api_key, file_name, current_user, ip_
         return parsed_data
     except Exception as e:
         st.error(f"도면 분석 중 오류 발생: {e}")
-        return get_multi_panel_sample()
+        return []
 
 def generate_excel_quote(df_items, margin_rate, labor_main, labor_branch, shipping):
     wb = openpyxl.Workbook()
@@ -410,7 +401,7 @@ def generate_excel_quote(df_items, margin_rate, labor_main, labor_branch, shippi
         amt_cell = ws_mat.cell(row=r, column=9, value=f"=G{r}*H{r}")
         amt_cell.number_format = "#,##0"
 
-    panels = df_items["분전반명"].unique() if "분전반명" in df_items.columns else ["기본분전반"]
+    panels = df_items["분전반명"].unique() if ("분전반명" in df_items.columns and len(df_items) > 0) else ["기본분전반"]
     for idx, p_name in enumerate(panels, start=1):
         r = idx + 5
         ws_sum.cell(row=r, column=2, value=idx).alignment = Alignment(horizontal="center")
@@ -445,26 +436,27 @@ if uploaded_file:
     with col2:
         st.subheader("🔍 도면 해석")
         if st.button("🚀 도면 분석 시작"):
-            with st.spinner("도면의 차단기, 콘센트, 단자대 등 모든 부품 데이터를 분석 중입니다..."):
+            with st.spinner("도면의 실제 부품 데이터를 추출하고 있습니다..."):
                 raw_data = analyze_drawing_with_gemini(image, GEMINI_API_KEY, uploaded_file.name, user['username'], user_ip)
-                st.session_state['extracted_data'] = pd.DataFrame(raw_data)
-                st.success("도면 분석이 완료되었습니다!")
+                if raw_data:
+                    st.session_state['extracted_data'] = pd.DataFrame(raw_data)
+                    st.success("도면 분석이 성공적으로 완료되었습니다!")
+                else:
+                    st.session_state['extracted_data'] = pd.DataFrame(columns=DEFAULT_COLUMNS)
+                    st.warning("도면에서 추출된 데이터가 없습니다.")
 
+# 초기 상태: 빈 데이터프레임 지정 (고정 샘플 제거)
 if 'extracted_data' not in st.session_state:
-    st.session_state['extracted_data'] = pd.DataFrame(get_multi_panel_sample())
+    st.session_state['extracted_data'] = pd.DataFrame(columns=DEFAULT_COLUMNS)
 
 st.divider()
 
-col_t, col_b1, col_b2 = st.columns([6, 2, 2])
+col_t, col_b = st.columns([8, 2])
 with col_t:
     st.subheader("📋 추출된 분전반별 차단기 데이터")
-with col_b1:
-    if st.button("🔄 샘플 데이터로 리셋"):
-        st.session_state['extracted_data'] = pd.DataFrame(get_multi_panel_sample())
-        st.rerun()
-with col_b2:
-    if st.button("🗑️ 전체 삭제"):
-        st.session_state['extracted_data'] = pd.DataFrame(columns=["분전반명", "구분", "종류", "극수", "용량", "부하명", "수량", "단가"])
+with col_b:
+    if st.button("🗑️ 표 전체 비우기"):
+        st.session_state['extracted_data'] = pd.DataFrame(columns=DEFAULT_COLUMNS)
         st.rerun()
 
 edited_df = st.data_editor(
