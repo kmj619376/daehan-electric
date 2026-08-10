@@ -274,7 +274,6 @@ if not st.session_state.get('logged_in', False):
                     st.session_state['email_verified'] = False
                     st.error("❌ 인증번호가 일치하지 않습니다. 다시 확인해 주세요.")
 
-        # 인증 성공 시 안내 메시지
         if st.session_state.get('email_verified', False):
             st.caption("✅ 이메일 인증이 완료되었습니다.")
 
@@ -282,19 +281,27 @@ if not st.session_state.get('logged_in', False):
         reg_pw_confirm = st.text_input("비밀번호 확인", type="password", key="reg_pw_confirm")
         
         if st.button("가입 신청하기", type="primary", use_container_width=True):
-            if not reg_id or not reg_name or not reg_phone or not reg_email or not reg_pw:
-                st.error("모든 필수 항목을 입력해 주세요.")
+            missing_fields = []
+            if not reg_id.strip(): missing_fields.append("아이디")
+            if not reg_name.strip(): missing_fields.append("이름 / 회사명")
+            if not reg_phone.strip(): missing_fields.append("휴대폰 번호")
+            if not reg_email.strip(): missing_fields.append("이메일 주소")
+            if not reg_pw.strip(): missing_fields.append("비밀번호")
+            if not reg_pw_confirm.strip(): missing_fields.append("비밀번호 확인")
+
+            if missing_fields:
+                st.error(f"❌ 아래 항목이 입력되지 않았습니다: **{', '.join(missing_fields)}**")
             elif reg_pw != reg_pw_confirm:
-                st.error("비밀번호가 일치하지 않습니다.")
+                st.error("❌ 비밀번호와 비밀번호 확인이 일치하지 않습니다.")
             elif not st.session_state.get('email_verified', False):
-                st.error("❌ 이메일 [인증번호 확인] 버튼을 눌러 인증을 완료해 주세요.")
+                st.error("❌ 이메일 [✅ 인증번호 확인] 버튼을 누르고 인증을 완료해 주세요.")
             else:
                 conn = sqlite3.connect(DB_FILE)
                 c = conn.cursor()
                 
                 c.execute("SELECT * FROM users WHERE username=?", (reg_id,))
                 if c.fetchone():
-                    st.error("이미 존재하는 아이디입니다.")
+                    st.error("❌ 이미 존재하거나 사용 중인 아이디입니다.")
                     conn.close()
                 else:
                     c.execute('''
@@ -304,13 +311,9 @@ if not st.session_state.get('logged_in', False):
                     conn.commit()
                     conn.close()
                     
-                    # 사용된 인증 세션 초기화
-                    if 'email_code' in st.session_state:
-                        del st.session_state['email_code']
-                    if 'code_email_target' in st.session_state:
-                        del st.session_state['code_email_target']
-                    if 'email_verified' in st.session_state:
-                        del st.session_state['email_verified']
+                    if 'email_code' in st.session_state: del st.session_state['email_code']
+                    if 'code_email_target' in st.session_state: del st.session_state['code_email_target']
+                    if 'email_verified' in st.session_state: del st.session_state['email_verified']
                     
                     st.success("🎉 이메일 인증 및 가입 신청이 성공적으로 완료되었습니다! 대표님(관리자)이 승인해 주시면 로그인이 가능합니다.")
     st.stop()
