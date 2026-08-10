@@ -11,7 +11,6 @@ import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
 from PIL import Image
-import extra_streamlit_components as stx
 
 # ------------------------------------------------------------------------------
 # 🔑 API Key 안전 연동 (Secrets에서 불러오기)
@@ -107,7 +106,7 @@ def hash_pw(pw):
 init_db()
 
 # ------------------------------------------------------------------------------
-# 1. 페이지 설정 및 쿠키 매니저 초기화
+# 1. 페이지 설정
 # ------------------------------------------------------------------------------
 st.set_page_config(
     page_title="대한일렉트릭 견적 프로그램",
@@ -116,26 +115,26 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-cookie_manager = stx.CookieManager()
 user_ip = get_remote_ip()
 
 # ------------------------------------------------------------------------------
-# 2. 쿠키 기반 자동 로그인 복원 & 동시 접속 통제 (F5 새로고침 방지)
+# 2. URL 세션 기반 자동 로그인 복원 & 동시 접속 통제 (F5 새로고침 방지)
 # ------------------------------------------------------------------------------
-auth_user = cookie_manager.get(cookie="daehan_user")
-auth_session = cookie_manager.get(cookie="daehan_session")
+url_session = st.query_params.get("session", None)
 
-if auth_user and auth_session and not st.session_state.get('logged_in', False):
+# F5 새로고침 시 URL의 세션 토큰으로 로그인 복원
+if url_session and not st.session_state.get('logged_in', False):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    c.execute("SELECT username, name, role, status, session_id FROM users WHERE username=?", (auth_user,))
+    c.execute("SELECT username, name, role, status, session_id FROM users WHERE session_id=?", (url_session,))
     user_db = c.fetchone()
     conn.close()
     
-    if user_db and user_db[3] == "approved" and user_db[4] == auth_session:
+    if user_db and user_db[3] == "approved":
         st.session_state['logged_in'] = True
-        st.session_state['user_info'] = {"username": user_db[0], "name": user_db[1], "role": user_db[2], "ip": user_ip, "session": auth_session}
+        st.session_state['user_info'] = {"username": user_db[0], "name": user_db[1], "role": user_db[2], "ip": user_ip, "session": url_session}
 
+# 다른 기기에서 새로 로그인하여 DB 세션 ID가 변경된 경우 즉시 강제 로그아웃
 if st.session_state.get('logged_in', False):
     current_user_id = st.session_state['user_info']['username']
     current_session_id = st.session_state['user_info'].get('session', '')
@@ -149,13 +148,12 @@ if st.session_state.get('logged_in', False):
     if db_session and db_session[0] != current_session_id:
         st.session_state['logged_in'] = False
         st.session_state['user_info'] = None
-        cookie_manager.delete("daehan_user")
-        cookie_manager.delete("daehan_session")
+        st.query_params.clear()
         st.error("🚨 다른 기기(PC/모바일)에서 동일한 계정으로 로그인되어 현재 접속이 강제 종료되었습니다.")
         st.stop()
 
 # ------------------------------------------------------------------------------
-# 3. 로그인 / 회원가입 UI (엔터키 지원 폼 구현)
+# 3. 로그인 / 회원가입 UI
 # ------------------------------------------------------------------------------
 if not st.session_state.get('logged_in', False):
     st.title("⚡ 대한일렉트릭 견적 프로그램")
@@ -167,7 +165,6 @@ if not st.session_state.get('logged_in', False):
     with tab1:
         st.markdown("### 로그인")
         
-        # Form 제출 형태로 변경하여 엔터키(Enter) 및 버튼 클릭 모두 지원
         with st.form(key="login_form"):
             login_id = st.text_input("아이디 (ID)", key="login_id")
             login_pw = st.text_input("비밀번호", type="password", key="login_pw")
@@ -194,8 +191,8 @@ if not st.session_state.get('logged_in', False):
                     st.session_state['logged_in'] = True
                     st.session_state['user_info'] = {"username": username, "name": name, "role": role, "ip": user_ip, "session": new_session}
                     
-                    cookie_manager.set("daehan_user", username, max_age=12*3600)
-                    cookie_manager.set("daehan_session", new_session, max_age=12*3600)
+                    # URL 파라미터에 세션 등록하여 F5 누적 방어
+                    st.query_params["session"] = new_session
                     st.success(f"{name}님, 환영합니다!")
                     st.rerun()
                 elif status == "pending":
@@ -261,8 +258,7 @@ with col_h2:
     if st.button("🚪 로그아웃", type="secondary"):
         st.session_state['logged_in'] = False
         st.session_state['user_info'] = None
-        cookie_manager.delete("daehan_user")
-        cookie_manager.delete("daehan_session")
+        st.query_params.clear()
         st.rerun()
 
 # ------------------------------------------------------------------------------
