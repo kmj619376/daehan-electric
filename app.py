@@ -9,11 +9,11 @@ import sqlite3
 import hashlib
 from datetime import datetime
 from PIL import Image
+import extra_streamlit_components as stx
 
 # ------------------------------------------------------------------------------
-# 🔑 API Key 고정 연동
+# 🔑 API Key 안전 연동 (Streamlit Secrets 우선 불러오기)
 # ------------------------------------------------------------------------------
-GEMINI_API_KEY = "AIzaSyAgIpFSVnGSTIMCMBaWtrUhkjNIF-CdqQU"
 
 MARGIN_RATE = 0.10          # 자재 마진율 10%
 LABOR_RATE_MAIN = 260000    # 메인 차단기 노무비
@@ -25,7 +25,6 @@ EXTRA_SHIPPING = 100000     # 현장 운반비 및 양중비
 # ------------------------------------------------------------------------------
 def get_remote_ip():
     try:
-        # Streamlit 클라이언트 헤더에서 IP 가져오기
         headers = st.context.headers
         if "X-Forwarded-For" in headers:
             return headers["X-Forwarded-For"].split(",")[0].strip()
@@ -44,7 +43,6 @@ def init_db():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     
-    # 사용자 테이블 (ip_address 컬럼 포함)
     c.execute('''
         CREATE TABLE IF NOT EXISTS users (
             username TEXT PRIMARY KEY,
@@ -57,13 +55,11 @@ def init_db():
         )
     ''')
     
-    # 기존 DB에 ip_address 컬럼이 없는 경우 자동 추가
     try:
         c.execute("ALTER TABLE users ADD COLUMN ip_address TEXT")
     except Exception:
         pass
 
-    # 분석 이력 로그 테이블 (ip_address 컬럼 포함)
     c.execute('''
         CREATE TABLE IF NOT EXISTS usage_logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -80,7 +76,6 @@ def init_db():
     except Exception:
         pass
     
-    # 지정하신 최고 관리자 계정 생성 (syd1007 / kmj851007)
     admin_id = "syd1007"
     admin_pass = hashlib.sha256("kmj851007".encode()).hexdigest()
     
@@ -104,7 +99,7 @@ def hash_pw(pw):
 init_db()
 
 # ------------------------------------------------------------------------------
-# 1. 페이지 설정
+# 1. 페이지 설정 및 쿠키 매니저 초기화
 # ------------------------------------------------------------------------------
 st.set_page_config(
     page_title="대한일렉트릭 견적 프로그램",
@@ -113,20 +108,34 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# ------------------------------------------------------------------------------
-# 2. 로그인 / 회원가입 UI 및 인증 로직
-# ------------------------------------------------------------------------------
-if 'logged_in' not in st.session_state:
-    st.session_state['logged_in'] = False
-if 'user_info' not in st.session_state:
-    st.session_state['user_info'] = None
+# 쿠키 매니저를 통한 세션 유지
+cookie_manager = stx.CookieManager()
 
 user_ip = get_remote_ip()
 
-if not st.session_state['logged_in']:
+# ------------------------------------------------------------------------------
+# 2. 쿠키 기반 자동 로그인 확인 (F5 새로고침 방지)
+# ------------------------------------------------------------------------------
+auth_user = cookie_manager.get(cookie="daehan_user")
+
+if auth_user and not st.session_state.get('logged_in', False):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("SELECT username, name, role, status FROM users WHERE username=?", (auth_user,))
+    user_db = c.fetchone()
+    conn.close()
+    
+    if user_db and user_db[3] == "approved":
+        st.session_state['logged_in'] = True
+        st.session_state['user_info'] = {"username": user_db[0], "name": user_db[1], "role": user_db[2], "ip": user_ip}
+
+# ------------------------------------------------------------------------------
+# 3. 로그인 / 회원가입 UI 및 인증 로직
+# ------------------------------------------------------------------------------
+if not st.session_state.get('logged_in', False):
     st.title("⚡ 대한일렉트릭 견적 프로그램")
     st.subheader("🔒 사용자 인증 및 승인 관리")
-    st.caption(f"🖥️ 현재 접속 PC IP 주소: **{user_ip}**")
+    st.caption(f"🖥️ 현재 접속 IP: **{user_ip}**")
     
     tab1, tab2 = st.tabs(["🔑 로그인", "📝 회원가입 신청"])
     
@@ -145,13 +154,15 @@ if not st.session_state['logged_in']:
             if user:
                 username, name, role, status = user
                 if status == "approved":
-                    # 로그인 성공 시 IP 업데이트
                     c.execute("UPDATE users SET ip_address=? WHERE username=?", (user_ip, username))
                     conn.commit()
                     conn.close()
                     
                     st.session_state['logged_in'] = True
                     st.session_state['user_info'] = {"username": username, "name": name, "role": role, "ip": user_ip}
+                    
+                    # 브라우저 쿠키에 로그인 상태 저장 (30일 유지)
+                    cookie_manager.set("daehan_user", username, max_age=30*24*3600)
                     st.success(f"{name}님, 환영합니다!")
                     st.rerun()
                 elif status == "pending":
@@ -194,7 +205,7 @@ if not st.session_state['logged_in']:
     st.stop()
 
 # ------------------------------------------------------------------------------
-# 3. 메인 프로그램 화면 (로그인 성공 시)
+# 4. 메인 프로그램 화면 (로그인 성공 시)
 # ------------------------------------------------------------------------------
 user = st.session_state['user_info']
 
@@ -207,6 +218,7 @@ with col_h2:
     if st.button("🚪 로그아웃", type="secondary"):
         st.session_state['logged_in'] = False
         st.session_state['user_info'] = None
+        cookie_manager.delete("daehan_user")  # 로그아웃 시 쿠키 삭제
         st.rerun()
 
 # ------------------------------------------------------------------------------
@@ -247,7 +259,7 @@ if user['role'] == 'admin':
             conn.close()
 
 # ------------------------------------------------------------------------------
-# 4. Gemini AI 분석 및 엑셀 생성 함수
+# 5. Gemini AI 분석 및 엑셀 생성 함수
 # ------------------------------------------------------------------------------
 def get_multi_panel_sample():
     return [
@@ -324,7 +336,6 @@ def analyze_drawing_with_gemini(image_pil, api_key, file_name, current_user, ip_
         
         parsed_data = json.loads(text)
         
-        # 📜 이용 이력(로그) DB 기록 (IP 포함)
         try:
             conn = sqlite3.connect(DB_FILE)
             c = conn.cursor()
@@ -334,7 +345,7 @@ def analyze_drawing_with_gemini(image_pil, api_key, file_name, current_user, ip_
             ''', (current_user, file_name, len(parsed_data), ip_addr, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
             conn.commit()
             conn.close()
-        except Exception as log_err:
+        except Exception:
             pass
             
         return parsed_data
@@ -421,7 +432,7 @@ def generate_excel_quote(df_items, margin_rate, labor_main, labor_branch, shippi
     return output.getvalue()
 
 # ------------------------------------------------------------------------------
-# 5. 도면 업로드 및 작업 메인 UI
+# 6. 도면 업로드 및 작업 메인 UI
 # ------------------------------------------------------------------------------
 uploaded_file = st.file_uploader("🖼️ 결선도 도면 업로드 (PNG, JPG)", type=["png", "jpg", "jpeg"])
 
