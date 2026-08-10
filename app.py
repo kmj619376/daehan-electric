@@ -58,17 +58,13 @@ def init_db():
             ip_address TEXT,
             session_id TEXT,
             pin_code TEXT,
-            pin_verified INTEGER DEFAULT 0,
             created_at TEXT NOT NULL
         )
     ''')
     
-    for col in ["ip_address", "session_id", "pin_code", "pin_verified"]:
+    for col in ["ip_address", "session_id", "pin_code"]:
         try:
-            if col == "pin_verified":
-                c.execute(f"ALTER TABLE users ADD COLUMN {col} INTEGER DEFAULT 0")
-            else:
-                c.execute(f"ALTER TABLE users ADD COLUMN {col} TEXT")
+            c.execute(f"ALTER TABLE users ADD COLUMN {col} TEXT")
         except Exception:
             pass
 
@@ -94,12 +90,12 @@ def init_db():
     c.execute("SELECT * FROM users WHERE username=?", (admin_id,))
     if not c.fetchone():
         c.execute('''
-            INSERT INTO users (username, password, name, role, status, ip_address, session_id, pin_code, pin_verified, created_at)
-            VALUES (?, ?, '최고관리자', 'admin', 'approved', '관리자PC', '', '000000', 1, ?)
+            INSERT INTO users (username, password, name, role, status, ip_address, session_id, pin_code, created_at)
+            VALUES (?, ?, '최고관리자', 'admin', 'approved', '관리자PC', '', '000000', ?)
         ''', (admin_id, admin_pass, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
     else:
         c.execute('''
-            UPDATE users SET password=?, role='admin', status='approved', pin_verified=1 WHERE username=?
+            UPDATE users SET password=?, role='admin', status='approved' WHERE username=?
         ''', (admin_pass, admin_id))
     
     conn.commit()
@@ -159,7 +155,7 @@ if st.session_state.get('logged_in', False):
         st.stop()
 
 # ------------------------------------------------------------------------------
-# 3. 로그인 / 회원가입 / 최초 1회 PIN 검증 UI
+# 3. 로그인 / 회원가입 UI
 # ------------------------------------------------------------------------------
 if not st.session_state.get('logged_in', False):
     st.title("⚡ 대한일렉트릭 견적 프로그램")
@@ -170,111 +166,79 @@ if not st.session_state.get('logged_in', False):
     
     with tab1:
         st.markdown("### 로그인")
+        login_id = st.text_input("아이디 (ID)", key="login_id")
+        login_pw = st.text_input("비밀번호", type="password", key="login_pw")
         
-        # 최초 1회 PIN 인증이 필요한 계정 체크
-        if 'pending_2fa_user' not in st.session_state:
-            login_id = st.text_input("아이디 (ID)", key="login_id")
-            login_pw = st.text_input("비밀번호", type="password", key="login_pw")
+        if st.button("로그인하기", type="primary"):
+            conn = sqlite3.connect(DB_FILE)
+            c = conn.cursor()
+            c.execute("SELECT username, name, role, status FROM users WHERE username=? AND password=?", 
+                      (login_id, hash_pw(login_pw)))
+            user = c.fetchone()
+            conn.close()
             
-            if st.button("로그인하기", type="primary"):
-                conn = sqlite3.connect(DB_FILE)
-                c = conn.cursor()
-                c.execute("SELECT username, name, role, status, pin_code, pin_verified FROM users WHERE username=? AND password=?", 
-                          (login_id, hash_pw(login_pw)))
-                user = c.fetchone()
-                conn.close()
-                
-                if user:
-                    username, name, role, status, pin_code, pin_verified = user
-                    if status == "approved":
-                        # 최고관리자이거나, 이미 1회 PIN 인증을 완료한 계정은 즉시 로그인
-                        if role == "admin" or pin_verified == 1:
-                            new_session = str(uuid.uuid4())
-                            conn = sqlite3.connect(DB_FILE)
-                            c = conn.cursor()
-                            c.execute("UPDATE users SET ip_address=?, session_id=? WHERE username=?", (user_ip, new_session, username))
-                            conn.commit()
-                            conn.close()
-                            
-                            st.session_state['logged_in'] = True
-                            st.session_state['user_info'] = {"username": username, "name": name, "role": role, "ip": user_ip, "session": new_session}
-                            
-                            cookie_manager.set("daehan_user", username, max_age=12*3600)
-                            cookie_manager.set("daehan_session", new_session, max_age=12*3600)
-                            st.success(f"{name}님, 환영합니다!")
-                            st.rerun()
-                        else:
-                            # 최초 1회 PIN 검증이 안 된 신규 승인 사용자
-                            st.session_state['pending_2fa_user'] = {
-                                "username": username, "name": name, "role": role, "pin": pin_code
-                            }
-                            st.rerun()
-                    elif status == "pending":
-                        st.warning("⏳ 아직 관리자 승인 대기 중인 계정입니다. 관리자 승인 후 이용 가능합니다.")
-                    else:
-                        st.error("🚫 사용이 차단되거나 비활성화된 계정입니다.")
-                else:
-                    st.error("❌ 아이디 또는 비밀번호가 일치하지 않습니다.")
-        else:
-            # 최초 1회 PIN 입력
-            p_user = st.session_state['pending_2fa_user']
-            st.info(f"🔑 **[{p_user['name']}]**님, 최초 등록을 위해 대표님(관리자)에게 전달받은 **6자리 승인 핀코드(PIN)**를 입력해 주세요. (최초 1회만 입력하시면 다음부터는 자동 통과됩니다)")
-            input_pin = st.text_input("최초 승인 PIN 코드 (6자리)", type="password", key="input_pin")
-            
-            c_col1, c_col2 = st.columns([1, 1])
-            with c_col1:
-                if st.button("핀코드 등록 및 로그인 완료", type="primary"):
-                    if input_pin == p_user['pin']:
-                        new_session = str(uuid.uuid4())
-                        conn = sqlite3.connect(DB_FILE)
-                        c = conn.cursor()
-                        # pin_verified = 1로 변경하여 다음부터 핀 입력 생략
-                        c.execute("UPDATE users SET ip_address=?, session_id=?, pin_verified=1 WHERE username=?", (user_ip, new_session, p_user['username']))
-                        conn.commit()
-                        conn.close()
-                        
-                        st.session_state['logged_in'] = True
-                        st.session_state['user_info'] = {"username": p_user['username'], "name": p_user['name'], "role": p_user['role'], "ip": user_ip, "session": new_session}
-                        del st.session_state['pending_2fa_user']
-                        
-                        cookie_manager.set("daehan_user", p_user['username'], max_age=12*3600)
-                        cookie_manager.set("daehan_session", new_session, max_age=12*3600)
-                        st.success("🎉 최초 핀코드 인증 성공! 다음 로그인부터는 아이디/비밀번호로 즉시 접속됩니다.")
-                        st.rerun()
-                    else:
-                        st.error("❌ 승인 PIN 코드가 일치하지 않습니다.")
-            with c_col2:
-                if st.button("취소 및 처음으로"):
-                    del st.session_state['pending_2fa_user']
+            if user:
+                username, name, role, status = user
+                if status == "approved":
+                    new_session = str(uuid.uuid4())
+                    conn = sqlite3.connect(DB_FILE)
+                    c = conn.cursor()
+                    c.execute("UPDATE users SET ip_address=?, session_id=? WHERE username=?", (user_ip, new_session, username))
+                    conn.commit()
+                    conn.close()
+                    
+                    st.session_state['logged_in'] = True
+                    st.session_state['user_info'] = {"username": username, "name": name, "role": role, "ip": user_ip, "session": new_session}
+                    
+                    cookie_manager.set("daehan_user", username, max_age=12*3600)
+                    cookie_manager.set("daehan_session", new_session, max_age=12*3600)
+                    st.success(f"{name}님, 환영합니다!")
                     st.rerun()
+                elif status == "pending":
+                    st.warning("⏳ 아직 관리자 승인 대기 중인 계정입니다. 관리자가 가입을 승인해야 이용할 수 있습니다.")
+                else:
+                    st.error("🚫 사용이 차단되거나 비활성화된 계정입니다.")
+            else:
+                st.error("❌ 아이디 또는 비밀번호가 일치하지 않습니다.")
                 
     with tab2:
         st.markdown("### 회원가입 신청")
-        st.info("회원가입 신청 후 관리자의 승인 및 최초 등록용 2차 PIN 코드를 부여받아야 사용 가능합니다.")
+        st.info("💡 회원가입 시 대표님(관리자)에게 사전 전달받은 **2차 승인 핀코드**를 입력하셔야 신청이 완료됩니다.")
+        
         reg_id = st.text_input("사용할 아이디 (ID)", key="reg_id")
         reg_name = st.text_input("이름 / 회사명", key="reg_name")
         reg_pw = st.text_input("비밀번호", type="password", key="reg_pw")
         reg_pw_confirm = st.text_input("비밀번호 확인", type="password", key="reg_pw_confirm")
+        reg_pin = st.text_input("2차 승인 핀코드 (관리자에게 전달받은 코드)", type="password", key="reg_pin")
         
-        if st.button("가입 신청하기"):
-            if not reg_id or not reg_name or not reg_pw:
-                st.error("모든 항목을 입력해 주세요.")
+        if st.button("가입 신청하기", type="primary"):
+            if not reg_id or not reg_name or not reg_pw or not reg_pin:
+                st.error("모든 항목과 2차 승인 핀 코드를 입력해 주세요.")
             elif reg_pw != reg_pw_confirm:
                 st.error("비밀번호가 일치하지 않습니다.")
             else:
                 conn = sqlite3.connect(DB_FILE)
                 c = conn.cursor()
+                
                 c.execute("SELECT * FROM users WHERE username=?", (reg_id,))
                 if c.fetchone():
                     st.error("이미 존재하는 아이디입니다.")
+                    conn.close()
                 else:
-                    c.execute('''
-                        INSERT INTO users (username, password, name, role, status, ip_address, pin_verified, created_at)
-                        VALUES (?, ?, ?, 'user', 'pending', ?, 0, ?)
-                    ''', (reg_id, hash_pw(reg_pw), reg_name, user_ip, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
-                    conn.commit()
-                    st.success("🎉 가입 신청이 완료되었습니다! 관리자 승인 후 이용 가능합니다.")
-                conn.close()
+                    c.execute("SELECT username FROM users WHERE pin_code=?", (reg_pin,))
+                    matched_admin_pin = c.fetchone()
+                    
+                    if matched_admin_pin or reg_pin == "000000":
+                        c.execute('''
+                            INSERT INTO users (username, password, name, role, status, ip_address, pin_code, created_at)
+                            VALUES (?, ?, ?, 'user', 'pending', ?, ?, ?)
+                        ''', (reg_id, hash_pw(reg_pw), reg_name, user_ip, reg_pin, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+                        conn.commit()
+                        conn.close()
+                        st.success("🎉 가입 신청이 성공적으로 완료되었습니다! 대표님(관리자)이 승인해 주시면 로그인이 가능합니다.")
+                    else:
+                        conn.close()
+                        st.error("❌ 유효하지 않은 2차 승인 핀코드입니다. 대표님(관리자)에게 전달받은 코드를 확인해 주세요.")
     st.stop()
 
 # ------------------------------------------------------------------------------
@@ -299,34 +263,34 @@ with col_h2:
 # 👑 관리자 전용 메뉴
 # ------------------------------------------------------------------------------
 if user['role'] == 'admin':
-    with st.expander("👑 [관리자 전용] 회원 승인, 랜덤 2차 PIN 발급 및 이용 이력 관리", expanded=True):
-        admin_tab1, admin_tab2 = st.tabs(["👥 회원 승인 & 랜덤 PIN 관리", "📜 이용 이력(로그) 보기"])
+    with st.expander("👑 [관리자 전용] 회원 승인 및 가입용 2차 PIN 관리", expanded=True):
+        admin_tab1, admin_tab2 = st.tabs(["👥 회원 승인 관리", "📜 이용 이력(로그) 보기"])
         
         with admin_tab1:
-            st.subheader("사용자 승인 및 최초 등록용 PIN 발급")
+            st.subheader("회원가입 신청 승인 및 상태 관리")
             conn = sqlite3.connect(DB_FILE)
-            df_users = pd.read_sql_query("SELECT username AS 아이디, name AS 이름, role AS 권한, status AS 상태, pin_code AS 지정PIN코드, pin_verified AS 최초인증여부, ip_address AS 접속IP, created_at AS 가입일시 FROM users", conn)
+            df_users = pd.read_sql_query("SELECT username AS 아이디, name AS 이름, role AS 권한, status AS 상태, pin_code AS 가입시사용한PIN, ip_address AS 접속IP, created_at AS 가입일시 FROM users", conn)
             st.dataframe(df_users, use_container_width=True)
             
-            c1, c2, c3, c4 = st.columns([3, 2, 2, 2])
+            c1, c2, c3 = st.columns([4, 4, 2])
             with c1:
-                target_user = st.selectbox("대상 아이디 선택", df_users["아이디"].tolist())
+                target_user = st.selectbox("승인/상태 변경 대상 선택", df_users["아이디"].tolist())
             with c2:
-                new_status = st.selectbox("상태 변경", ["approved (승인)", "pending (대기)", "rejected (차단)"])
+                new_status = st.selectbox("변경할 상태 선택", ["approved (승인 - 접속허용)", "pending (대기)", "rejected (차단)"])
             with c3:
-                random_pin = str(random.randint(100000, 999999))
-                new_pin = st.text_input("부여할 최초 PIN (랜덤)", value=random_pin)
-            with c4:
                 st.write("")
                 st.write("")
-                if st.button("설정 적용 및 PIN 발급"):
+                if st.button("상태 변경 적용", type="primary"):
                     status_code = new_status.split()[0]
                     c = conn.cursor()
-                    c.execute("UPDATE users SET status=?, pin_code=? WHERE username=?", (status_code, new_pin, target_user))
+                    c.execute("UPDATE users SET status=? WHERE username=?", (status_code, target_user))
                     conn.commit()
-                    st.success(f"[{target_user}] 승인 상태: {status_code} / 발급된 PIN: {new_pin}")
+                    st.success(f"[{target_user}] 회원 상태가 [{status_code}]로 즉시 변경되었습니다!")
                     st.rerun()
             conn.close()
+            
+            st.divider()
+            st.caption("💡 **신규 가입자용 사전 PIN 부여 안내**: 기본 마스터 PIN 코드는 `000000`입니다. 신규 가입자에게 `000000`을 알려주시고 가입 신청이 들어오면 위에서 [승인] 버튼을 눌러주시면 됩니다.")
             
         with admin_tab2:
             st.subheader("도면 분석 및 견적 이용 기록")
@@ -477,7 +441,10 @@ def generate_excel_quote(df_items, margin_rate, labor_main, labor_branch, shippi
         amt_cell = ws_mat.cell(row=r, column=9, value=f"=G{r}*H{r}")
         amt_cell.number_format = "#,##0"
 
-    panels = df_items["분전반명"].unique() if ("분전반명" in df_items.columns and len(df_items) > 0) else ["기본분전반"]
+    # 빈 행을 제외하고 실제 분전반명만 추려내기
+    valid_df = df_items[df_items["분전반명"].astype(str).str.strip() != ""]
+    panels = valid_df["분전반명"].unique() if len(valid_df) > 0 else ["기본분전반"]
+    
     for idx, p_name in enumerate(panels, start=1):
         r = idx + 5
         ws_sum.cell(row=r, column=2, value=idx).alignment = Alignment(horizontal="center")
@@ -497,7 +464,7 @@ def generate_excel_quote(df_items, margin_rate, labor_main, labor_branch, shippi
     return output.getvalue()
 
 # ------------------------------------------------------------------------------
-# 6. 다중 도면 업로드 및 작업 메인 UI
+# 6. 다중 도면 업로드 및 작업 메인 UI (도면별 한 칸 띄우기 적용)
 # ------------------------------------------------------------------------------
 uploaded_files = st.file_uploader(
     "🖼️ 결선도 도면 여러 장 업로드 (PNG, JPG, 복수 선택 가능)", 
@@ -525,19 +492,27 @@ if uploaded_files:
             progress_bar = st.progress(0)
             status_text = st.empty()
             
+            # 빈 행 구분을 위한 템플릿
+            blank_row = {"분전반명": "", "구분": "", "종류": "", "극수": "", "용량": "", "부하명": "", "수량": None, "단가": None}
+            
             for idx, file in enumerate(uploaded_files):
                 status_text.text(f" 분석 중 ({idx+1}/{len(uploaded_files)}): {file.name}")
                 img = Image.open(file)
                 parsed_list = analyze_drawing_with_gemini(img, GEMINI_API_KEY, file.name, user['username'], user_ip)
+                
                 if parsed_list:
+                    # 이전 도면 결과가 존재하면 결과 사이에 빈 한 줄 삽입
+                    if all_results:
+                        all_results.append(blank_row)
                     all_results.extend(parsed_list)
+                    
                 progress_bar.progress((idx + 1) / len(uploaded_files))
                 
             status_text.text("모든 도면 분석 완료!")
             
             if all_results:
                 st.session_state['extracted_data'] = pd.DataFrame(all_results)
-                st.success(f"🎉 총 {len(uploaded_files)}개 도면에서 {len(all_results)}개의 항목을 성공적으로 추출했습니다!")
+                st.success(f"🎉 총 {len(uploaded_files)}개 도면의 분석이 성공적으로 완료되었습니다!")
             else:
                 st.session_state['extracted_data'] = pd.DataFrame(columns=DEFAULT_COLUMNS)
                 st.warning("도면에서 추출된 데이터가 없습니다.")
