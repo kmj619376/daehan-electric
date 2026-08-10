@@ -160,7 +160,26 @@ st.set_page_config(
 user_ip = get_remote_ip()
 
 # ------------------------------------------------------------------------------
-# 2. URL 청정화 및 동시 접속 통제
+# 🚨 중복 접속 강제 종료 팝업 모달 정의
+# ------------------------------------------------------------------------------
+@st.dialog("🚨 보안 경고: 다른 기기 중복 로그인 감지")
+def show_duplicate_login_dialog():
+    st.error("### ⚠️ 계정이 다른 기기에서 로그인되었습니다!")
+    st.markdown("""
+    **다른 PC 또는 모바일 기기에서 동일한 계정으로 로그인되어 현재 접속이 강제 종료되었습니다.**
+    
+    * **사유**: 1계정 1기기 실시간 보안 정책 적용
+    * **조치 사항**: 타인에게 비밀번호가 유출되었을 가능성이 있으니, 로그인 후 비밀번호 변경을 권장합니다.
+    """)
+    st.divider()
+    if st.button("확인 및 로그인 화면으로 이동", type="primary", use_container_width=True):
+        st.session_state['logged_in'] = False
+        st.session_state['user_info'] = None
+        st.session_state['show_dup_modal'] = False
+        st.rerun()
+
+# ------------------------------------------------------------------------------
+# 2. URL 청정화 및 동시 접속 실시간 통제
 # ------------------------------------------------------------------------------
 if "session" in st.query_params:
     st.query_params.clear()
@@ -176,10 +195,11 @@ if st.session_state.get('logged_in', False):
     conn.close()
     
     if db_session and db_session[0] != current_session_id:
-        st.session_state['logged_in'] = False
-        st.session_state['user_info'] = None
-        st.error("🚨 다른 기기(PC/모바일)에서 동일한 계정으로 로그인되어 현재 접속이 강제 종료되었습니다.")
-        st.stop()
+        st.session_state['show_dup_modal'] = True
+
+if st.session_state.get('show_dup_modal', False):
+    show_duplicate_login_dialog()
+    st.stop()
 
 # ------------------------------------------------------------------------------
 # 3. 로그인 / 회원가입 UI
@@ -241,6 +261,7 @@ if not st.session_state.get('logged_in', False):
                         "session": new_session,
                         "expires_at": expires_at
                     }
+                    st.session_state['show_dup_modal'] = False
                     st.success(f"{name}님, 환영합니다!")
                     st.rerun()
                 elif status == "pending":
@@ -358,8 +379,11 @@ user = st.session_state['user_info']
 
 # ⏳ 남은 이용 시간 카운트다운 배지 계산
 remaining_badge = ""
+badge_color = "#1E88E5"
+
 if user['role'] == 'admin':
-    remaining_badge = "👑 관리자 (무제한)"
+    remaining_badge = "👑 관리자 (무제한 이용)"
+    badge_color = "#2E7D32"
 else:
     expires_str = user.get('expires_at', '')
     if expires_str:
@@ -373,28 +397,46 @@ else:
                 hours = diff.seconds // 3600
                 if days > 3:
                     remaining_badge = f"🟢 이용 가능: D-{days} ({days}일 {hours}시간 남음)"
+                    badge_color = "#2E7D32"
                 else:
                     remaining_badge = f"⚠️ 만료 임박: D-{days} ({days}일 {hours}시간 남음)"
+                    badge_color = "#D32F2F"
             else:
                 remaining_badge = "⌛ 이용 기간 만료됨"
+                badge_color = "#C62828"
         except Exception:
             remaining_badge = "⏳ 만료일 확인 불가"
 
-col_h1, col_h2 = st.columns([7, 3])
+col_h1, col_h2 = st.columns([6, 4])
 with col_h1:
     st.title("⚡ 대한일렉트릭 견적 프로그램")
     st.caption(f"접속 계정: **{user['name']} ({user['username']})** [{user['role'].upper()}] | 접속 IP: **{user.get('ip', user_ip)}**")
 with col_h2:
     st.write("")
     if remaining_badge:
-        st.markdown(f"### `{remaining_badge}`")
-    if st.button("🚪 로그아웃", type="secondary"):
+        st.markdown(f"""
+            <div style="
+                background-color: {badge_color};
+                color: white;
+                font-size: 20px;
+                font-weight: 800;
+                padding: 10px 18px;
+                border-radius: 8px;
+                text-align: center;
+                box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+                margin-bottom: 8px;
+            ">
+                {remaining_badge}
+            </div>
+        """, unsafe_allow_html=True)
+        
+    if st.button("🚪 로그아웃", type="secondary", use_container_width=True):
         st.session_state['logged_in'] = False
         st.session_state['user_info'] = None
         st.rerun()
 
 # ------------------------------------------------------------------------------
-# 👑 관리자 전용 메뉴 (회원 승인 & 이용 기간 재발급/연장)
+# 👑 관리자 전용 메뉴
 # ------------------------------------------------------------------------------
 if user['role'] == 'admin':
     with st.expander("👑 [관리자 전용] 회원 승인 및 이용 기간(7일/연장) 관리", expanded=True):
@@ -405,7 +447,6 @@ if user['role'] == 'admin':
             conn = sqlite3.connect(DB_FILE)
             df_users = pd.read_sql_query("SELECT username AS 아이디, name AS 이름, email AS 이메일, phone AS 연락처, role AS 권한, status AS 상태, expires_at AS 만료일시, ip_address AS 접속IP, created_at AS 가입일시 FROM users", conn)
             
-            # 남은 일수 표시 계산
             now_dt = datetime.now()
             def calc_remaining_days(row):
                 if row['권한'] == 'admin': return "무제한 (관리자)"
@@ -420,13 +461,11 @@ if user['role'] == 'admin':
             
             df_users['남은기간'] = df_users.apply(calc_remaining_days, axis=1)
             
-            # 컬럼 순서 재정리
             cols_order = ['아이디', '이름', '상태', '남은기간', '만료일시', '연락처', '이메일', '가입일시', '접속IP']
             st.dataframe(df_users[[c for c in cols_order if c in df_users.columns]], use_container_width=True)
             
             st.markdown("#### ⚙️ 회원 승인 / 상태 및 이용 기간 선택 설정")
             
-            # 관리자(admin) 계정은 선택 대상 드롭다운에서 제외
             non_admin_users = df_users[df_users['권한'] != 'admin']['아이디'].tolist()
             
             if not non_admin_users:
